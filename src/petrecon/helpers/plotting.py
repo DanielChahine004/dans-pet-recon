@@ -332,7 +332,7 @@ def snap_lors_to_detectors(lor_path=None, n_rings=10, n_det_per_ring=10, radius=
         snapped_lors: (N, 6) array with endpoints moved to nearest detectors.
     """
     if lor_data is None:
-        from helpers.data_io import load_lors
+        from .data_io import load_lors
         lor_data = load_lors(lor_path)
 
     # Generate detector positions

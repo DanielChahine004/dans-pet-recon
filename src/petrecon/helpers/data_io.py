@@ -15,7 +15,7 @@ def load_lors(path, default_path=None):
     """
     if path is None:
         if default_path is None:
-            default_path = Path(__file__).parent.parent.parent / "Post_process" / "Outputs" / "coincidence_pairs.npz"
+            raise ValueError("No LOR file path provided")
         path = default_path
 
     path = Path(path)

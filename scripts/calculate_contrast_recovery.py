@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches
 from scipy.ndimage import gaussian_filter
 from scipy.optimize import curve_fit
-from helpers.data_io import load_lors
+from petrecon.helpers.data_io import load_lors
 
 def make_sphere_mask(shape, centre, radius):
     """

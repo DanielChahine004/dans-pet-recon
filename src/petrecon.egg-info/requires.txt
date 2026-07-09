@@ -1,0 +1,12 @@
+numpy<=2.2
+numba
+scipy
+tqdm
+matplotlib
+plotly
+
+[:python_version < "3.11"]
+tomli
+
+[viewing]
+shiny

@@ -22,7 +22,7 @@ def plot_sss_diagnostics(scatter_sino, sinogram_params, scatter_per_lor,
     Shows scatter sinogram, measured sinogram, tail fitting, per-LOR
     scatter distribution, axial scatter, and scatter fraction profile.
     """
-    from helpers.scatter import _bin_lors_to_sinogram
+    from .scatter import _bin_lors_to_sinogram
 
     sp = sinogram_params
     s_edges = sp['s_edges']

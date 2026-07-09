@@ -2,7 +2,7 @@ import pickle
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
-from helpers.plotting import (
+from petrecon.helpers.plotting import (
     plot_interactive, plot_static, create_sinogram,
     plot_scanner_geometry, plot_line_profile_with_gaussian_fit,
 )

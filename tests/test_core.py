@@ -15,17 +15,17 @@ import sys
 import os
 import math
 
-# Ensure helpers/ is importable
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+# Ensure petrecon is importable without an editable install
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import numba
 from numba import cuda
-from helpers.siddon import (
+from petrecon.helpers.siddon import (
     siddon_cuda, forward_project_kernel,
     backproject_kernel, backproject_weighted_kernel,
 )
-from helpers.sensitivity import generate_scanner_lors, filter_lors_by_fov
-from helpers.scatter import _bin_lors_to_sinogram, scatter_sinogram_to_lor
+from petrecon.helpers.sensitivity import generate_scanner_lors, filter_lors_by_fov
+from petrecon.helpers.scatter import _bin_lors_to_sinogram, scatter_sinogram_to_lor
 
 
 # ---------------------------------------------------------------------------

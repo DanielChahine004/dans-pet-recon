@@ -29,7 +29,7 @@ USE_BACKPROJECTION = True  # True → load backprojection_image.npy, False → r
 
 def count_lors(lor_path: str) -> tuple[int, int] | None:
     """Count total and valid (post-filter) LORs. Returns (total, valid) or None."""
-    from helpers.data_io import load_lors
+    from petrecon.helpers.data_io import load_lors
     lor_path = Path(lor_path)
     if not lor_path.exists():
         return None
@@ -138,7 +138,7 @@ def _fit_line_profile(image, axis_name, coord1, coord2, voxel_size):
 def save_sinogram(lor_path: str, label: str, save_dir: Path,
                   n_radial_bins=150, n_angle_bins=150, n_axial_bins=100):
     """Compute sinogram from LOR data and save axially-summed 2D sinogram as PDF."""
-    from helpers.data_io import load_lors
+    from petrecon.helpers.data_io import load_lors
 
     lor_path = Path(lor_path)
     if not lor_path.exists():

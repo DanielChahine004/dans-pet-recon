@@ -11,7 +11,7 @@ ACF_i = exp(-integral of mu along LOR_i)
 import numpy as np
 from numba import cuda
 from tqdm import tqdm
-from helpers.siddon import forward_project_kernel, backproject_weighted_kernel
+from .siddon import forward_project_kernel, backproject_weighted_kernel
 
 
 def compute_acf(lors, mu_map, grid_size, voxel_size, batch_size=1_000_000):

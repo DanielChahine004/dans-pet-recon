@@ -22,7 +22,7 @@ import math
 from numba import cuda, njit
 import numba
 from tqdm import tqdm
-from helpers.siddon import siddon_cuda
+from .siddon import siddon_cuda
 
 
 # =============================================================================

@@ -12,7 +12,7 @@ from pathlib import Path
 from scipy.ndimage import gaussian_filter
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from helpers.plotting import plot_line_profile_with_gaussian_fit
+from petrecon.helpers.plotting import plot_line_profile_with_gaussian_fit
 
 # ==============================================================================
 # CONFIGURATION — change these to view different point sources

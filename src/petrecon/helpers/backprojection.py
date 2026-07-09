@@ -1,7 +1,7 @@
 from numba import cuda
 import numpy as np
 from tqdm import tqdm
-from helpers.siddon import backproject_kernel
+from .siddon import backproject_kernel
 
 
 def backproject_gpu(lors, grid_size, voxel_size, batch_size=100_000):

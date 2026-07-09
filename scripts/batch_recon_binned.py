@@ -2,8 +2,8 @@
 
 Phase 1: Snap GT and Pred LOR endpoints to 3 clinically relevant detector
          discretisation grids using KD-tree nearest-neighbour matching.
-Phase 2: Run OSEM reconstruction for each binned dataset, patching
-         recon_config.py with matching scanner geometry per job.
+Phase 2: Run OSEM reconstruction for each binned dataset via
+         `python -m petrecon run` with matching scanner geometry per job.
 
 Skips positions/configs where outputs already exist (resumable).
 """
@@ -15,12 +15,10 @@ from pathlib import Path
 
 BASE_DIR = Path(os.path.expanduser("~/Opengate/ragy_files/Point_Sources_Processed"))
 BINNED_DIR = Path(os.path.expanduser("~/Opengate/ragy_files/Point_Sources_Binned_new(osem)"))
-RECON_CONFIG_PATH = Path(__file__).parent / "recon_config.py"
-RUN_RECON_PATH = Path(__file__).parent / "run_recon.py"
 
 SKIP_DIRS = {"outside_fov", "pdf_outputs"}
 
-# Scanner geometry (must match recon_config.py)
+# Scanner geometry (must match the petrecon run flags below)
 RADIUS = 117.711 * 2       # inner radius in mm
 AXIAL_LENGTH = 296          # mm
 
@@ -44,39 +42,10 @@ def get_lor_csv(pos_dir, kind):
     return csv_path if csv_path.exists() else None
 
 
-def patch_config(original_text, path_to_lors, output_dir, n_rings, n_det_per_ring):
-    """Replace config values for this job."""
-    lines = original_text.splitlines()
-    new_lines = []
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            new_lines.append(line)
-            continue
-        if stripped.startswith("PATH_TO_LORS") and "=" in stripped:
-            new_lines.append(f"PATH_TO_LORS = '{path_to_lors}'")
-        elif stripped.startswith("OUTPUT_DIR") and "=" in stripped:
-            new_lines.append(f"OUTPUT_DIR = '{output_dir}'")
-        elif stripped.startswith("N_AXIAL_RINGS") and "=" in stripped:
-            new_lines.append(f"N_AXIAL_RINGS = {n_rings}")
-        elif stripped.startswith("N_DETECTORS_PER_RING") and "=" in stripped:
-            new_lines.append(f"N_DETECTORS_PER_RING = {n_det_per_ring}")
-        elif stripped.startswith("RECON_ALGORITHM") and "=" in stripped:
-            new_lines.append('RECON_ALGORITHM = "OSEM"')
-        elif stripped.startswith("SENSITIVITY_CORRECTION") and "=" in stripped:
-            new_lines.append("SENSITIVITY_CORRECTION = True")
-        elif stripped.startswith("SCATTER_CORRECTION") and "=" in stripped:
-            new_lines.append("SCATTER_CORRECTION = False")
-        else:
-            new_lines.append(line)
-    return "\n".join(new_lines)
-
-
 def phase1_snap(overwrite=False):
     """Snap all LORs to each detector grid."""
-    sys.path.insert(0, str(Path(__file__).parent))
-    from helpers.data_io import load_lors
-    from helpers.plotting import snap_lors_to_detectors
+    from petrecon.helpers.data_io import load_lors
+    from petrecon.helpers.plotting import snap_lors_to_detectors
 
     snapped_count = 0
     for pos_dir in sorted(BASE_DIR.iterdir()):
@@ -126,8 +95,6 @@ def phase1_snap(overwrite=False):
 
 def phase2_reconstruct(overwrite=False):
     """Run OSEM reconstruction for each binned LOR set."""
-    original_config = RECON_CONFIG_PATH.read_text()
-
     # Collect jobs
     jobs = []
     for pos_dir in sorted(BASE_DIR.iterdir()):
@@ -165,28 +132,28 @@ def phase2_reconstruct(overwrite=False):
         print(f"  Geometry:   {cfg['n_det_per_ring']} det/ring × {cfg['n_rings']} rings")
         print("=" * 60)
 
-        patched = patch_config(
-            original_config, csv_path, output_dir,
-            cfg["n_rings"], cfg["n_det_per_ring"],
-        )
-        RECON_CONFIG_PATH.write_text(patched)
-
+        cmd = [
+            sys.executable, "-m", "petrecon", "run",
+            "--lors", csv_path,
+            "--output", output_dir,
+            "--rings", str(cfg["n_rings"]),
+            "--detectors-per-ring", str(cfg["n_det_per_ring"]),
+            "--inner-radius", str(RADIUS),
+            "--axial-length", str(AXIAL_LENGTH),
+            "--algorithm", "OSEM",
+            "--sensitivity",
+            "--no-scatter",
+        ]
         try:
-            subprocess.run(
-                [sys.executable, str(RUN_RECON_PATH)],
-                cwd=str(RUN_RECON_PATH.parent),
-                check=True,
-            )
+            subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError as e:
             print(f"\n  ERROR: Reconstruction failed for {pos_name}/{kind}_binned_{label} "
                   f"(exit code {e.returncode})")
-            RECON_CONFIG_PATH.write_text(original_config)
             sys.exit(1)
 
         print(f"\n  Done: {pos_name}/{kind}_binned_{label}\n")
 
-    RECON_CONFIG_PATH.write_text(original_config)
-    print("\nAll binned reconstructions complete. Original recon_config.py restored.")
+    print("\nAll binned reconstructions complete.")
 
 
 def main():

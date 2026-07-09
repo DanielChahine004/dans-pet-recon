@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "petrecon"
+version = "0.1.0"
+description = "GPU-accelerated PET image reconstruction (OSEM / backprojection) with sensitivity, attenuation, and SSS scatter corrections"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Daniel Chahine" }]
+dependencies = [
+    "numpy<=2.2",
+    "numba",       # numba.cuda kernels require a CUDA-capable GPU + toolkit
+    "scipy",
+    "tqdm",
+    "matplotlib",
+    "plotly",
+    "tomli; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+viewing = ["shiny"]  # scripts/shiny_viewing.py only
+
+[project.scripts]
+petrecon = "petrecon.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

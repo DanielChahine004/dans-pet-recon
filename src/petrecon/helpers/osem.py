@@ -1,7 +1,7 @@
 from numba import cuda
 import numpy as np
 from tqdm import tqdm
-from helpers.siddon import forward_project_kernel, backproject_weighted_kernel, backproject_kernel
+from .siddon import forward_project_kernel, backproject_weighted_kernel, backproject_kernel
 
 def osem_gpu(lors, grid_size, voxel_size, sensitivity_image, n_iterations=10, n_subsets=8,
              batch_size=500_000, init_image=None, acf=None, scatter=None):
