@@ -13,3 +13,4 @@ water_attenuation_map.npy
 *.egg-info/
 build/
 dist/
+example_output/
