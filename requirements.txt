@@ -1,0 +1,10 @@
+# Core reconstruction
+numpy<=2.2
+numba          # requires a CUDA-capable GPU + CUDA toolkit for numba.cuda kernels
+scipy
+tqdm
+
+# Plotting / viewing
+matplotlib
+plotly
+shiny          # only needed for shiny_viewing.py

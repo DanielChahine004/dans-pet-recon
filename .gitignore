@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Generated reconstruction outputs
+outputs/
+*.pkl
+
+# Large binary inputs (65 MB — use git-lfs if you want this versioned)
+water_attenuation_map.npy

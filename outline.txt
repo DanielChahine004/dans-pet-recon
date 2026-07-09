@@ -1,0 +1,271 @@
+\chapter{Image reconstruction}
+
+As with classical PET scanners, localising the position at which coincident pairs of gamma photons were detected is followed by the use of established reconstruction algorithms which translate the coincidence information obtained during the course of the scan into a pixel/voxel wise image of the radioactive source distribution. The benefits of a continuous annular PET scanner over classical scanners becomes particularly apparent in the image reconstruction process as the contiguous scintillator design and localisation methods allow LOR endpoints to exist in the spaces between detectors, mitigating the localisation error that is intrinsic to binning LOR endpoints to the central position of the nearest scintillator crystal.
+
+A handful of established software packages are traditionally used to perform image reconstructions from coincidence data; Software for Tomographic Image Reconstruction (STIR) \cite{Thielemans2012} and Customisation and Advanced Software for Tomographic Reconstruction (CASToR) \cite{Merlin2018} are among the most common, and newer (although less established) alternatives such as Pytomography \cite{POLSON2025102020} also exist. The caveat with these reconstruction packages is that they have necessarily been designed to ingest discretised coincidence data in the form of either a sinogram (where LORs are binned according to their radial distance to the centre of the scanner, transaxial angles, and axial position) or as listmode data (where LOR endpoints are binned according to the detector in which they were detected). These packages also require as input the geometry of the scanner, again necessarily assuming a classical scanner design. An analogous classical scanner geometry could be defined, and our data binned to reflect how that classical scanner would have recorded the same data, enabling us to employ these established packages for image reconstruction, however this would not take full advantage of the continuous endpoint localisation capabilities permitted by our continuous annular scintillator design.
+
+Given this context, we produced our own image reconstruction pipeline which takes full advantage of the continuous LOR endpoint localisation capabilities of our scanner design; a continuous-endpoint-compatible instance of the Ordered-Subset Expectation Maximisation (OSEM) algorithm, which itself is ubiquitous in modern clinical PET image reconstruction pipelines. Our implementation was built in python, using the numba package to write cuda-accelerated kernels for highly parallelised image reconstruction. 
+
+
+\section{System matrix}
+\label{sec:system-matrix}
+System matrix modelling is central to virtually all image reconstruction algorithms as it defines the geometric and physical relationship between the voxel-wise radioactive source distribution, and how that distribution is 'forward projected' to the detectors of the scanner. Each element $P_{ij}$ of the system matrix represents the probability (or relative contribution) that an emission from voxel $j$ will be detected along LOR $i$, determined primarily by the length of the ray path through that voxel. The same system matrix hence defines the inverse; how coincidence data obtained during a scan can be `back projected' to provide a plausible voxel-wise representation of the radioactivity distribution which generated the data. Computing the system matrix requires determining which voxels each LOR intersects and the path length through each voxel. The Siddon ray tracing algorithm provides an efficient method for this calculation.
+
+\section{Siddon ray tracing algorithm}
+\label{sec:siddon}
+The Siddon ray tracing algorithm \cite{Siddon1985} efficiently computes the intersections between a ray (LOR) and a regular 3D voxel grid. Given the continuous endpoints of an LOR, $(x_1, y_1, z_1)$ and $(x_2, y_2, z_2)$, the algorithm parametrically traces the ray path through the voxel-wise image space and determines: (1) which voxels the ray intersects, and (2) the length of the ray segment within each voxel.
+
+The algorithm exploits the regularity of the voxel grid by parametrically defining the ray as:
+\begin{equation}
+\mathbf{r}(t) = \mathbf{r}_1 + t(\mathbf{r}_2 - \mathbf{r}_1), \quad t \in [0, 1]
+\end{equation}
+where $\mathbf{r}_1 = (x_1, y_1, z_1)$ and $\mathbf{r}_2 = (x_2, y_2, z_2)$. By computing the $t$ values at which the ray crosses each voxel boundary plane (in $x$, $y$, and $z$ directions), the algorithm marches along the ray, visiting only the voxels that are intersected. For each intersected voxel, the path length is computed as the difference in $t$ values multiplied by the ray length (as t is normalised by the ray length to be 0 at the 'start' of the ray and 1 at its 'end').
+
+This approach is computationally efficient, scaling linearly with the number of intersected voxels rather than requiring checks against all $N$ voxels in the image. Our CUDA implementation parallelises Siddon ray tracing across all LORs, computing system matrix elements on-the-fly during forward and backprojection operations rather than pre-computing and storing the full sparse matrix.
+
+
+\section{Reconstruction algorithms}
+\label{sec:recon-algorithms}
+
+\subsection{Unfiltered backprojection (UFB)}
+\label{sec:ufb}
+Unfiltered backprojection (UFB) is the simplest non-iterative method for tomographic image reconstruction which works by distributing each measured coincidence event back along its corresponding LOR. For each LOR $i$ with measured counts $y_i$, the contribution to voxel $j$ is proportional to the ray path length $\ell_{ij}$ through that voxel (computed via Siddon's algorithm). The UFB image is computed as:
+
+\begin{equation}
+x_j^{\text{UFB}} = \sum_{i=1}^{M} \ell_{ij} \, y_i
+\end{equation}
+
+where $M$ is the total number of LORs and $\ell_{ij}$ is the length of LOR $i$ passing through voxel $j$ (zero if no intersection). In our coordinate-based list-mode implementation, each LOR represents an independent detection event (hence measured counts per LOR $y_i = 1$), simplifying the UFB image to:
+
+\begin{equation}
+x_j^{\text{UFB}} = \sum_{i=1}^{M} \ell_{ij}
+\end{equation}
+
+The UFB image is normalised by the sensitivity image (described in Section~\ref{sec:sensitivity}) to account for non-uniform detection probability throughout the scanners field of view:
+
+\begin{equation}
+x_j^{(0)} = \frac{x_j^{\text{UFB}}}{S_j}
+\end{equation}
+
+where the sensitivity is computed by backprojecting all geometric scanner LORs:
+
+\begin{equation}
+S_j = \begin{cases}
+\sum_{i=1}^{M_{\text{scanner}}} \ell_{ij} & \text{(geometric sensitivity)} \\
+\sum_{i=1}^{M_{\text{scanner}}} a_i \, \ell_{ij} & \text{(attenuation-weighted sensitivity)}
+\end{cases}
+\end{equation}
+
+where $M_{\text{scanner}}$ is the total number of possible LOR pairs in the scanner geometry, and $a_i = \exp(-\int_{\text{LOR}_i} \mu(\mathbf{r}) \, d\mathbf{r})$ is the attenuation correction factor. This sensitivity-normalised UFB provides a reasonable initial estimate that accelerates the convergence of iterative methods, compared to initialisation with a uniform image.
+
+\subsection{Maximum Likelihood Expectation Maximisation (MLEM)}
+\label{sec:mlem}
+The Maximum Likelihood Expectation Maximisation (MLEM) algorithm \cite{Shepp2008} is a statistical iterative reconstruction method that models the Poisson statistics inherent to photon counting in PET. Given measured counts $y_i$ along each LOR $i$, MLEM seeks the image $\mathbf{x}$ that maximises the likelihood of observing the measured data. The algorithm iteratively updates the image estimate using:
+
+\begin{equation}
+x_j^{(n+1)} = \frac{x_j^{(n)}}{\sum_{i=1}^{M} P_{ij}} \sum_{i=1}^{M} P_{ij} \frac{y_i}{\sum_{k=1}^{N} P_{ik} x_k^{(n)}}
+\end{equation}
+
+where $x_j^{(n)}$ is the activity estimate for voxel $j$ at iteration $n$, $N$ is the total number of voxels, and $M$ is the total number of LORs. The term $\sum_{k=1}^{N} P_{ik} x_k^{(n)}$ represents the forward projection (predicted counts along LOR $i$), while $\sum_{i=1}^{M} P_{ij}$ is the sensitivity correction term accounting for the geometric detection probability of voxel $j$.
+
+While MLEM guarantees convergence to the maximum likelihood solution, it requires computing forward and backprojections over all LORs at each iteration, making it computationally expensive for large datasets such as those obtained in clinical contexts. For this reason, a batch-compatible implementation of MLEM is more often used in clinical settings, known as OSEM.
+
+\subsection{Ordered Subset Expectation Maximization (OSEM)}
+\label{sec:osem}
+OSEM \cite{Hudson2002} accelerates MLEM by partitioning the full set of LORs into $S$ disjoint subsets. Rather than updating the image using all LORs simultaneously, OSEM performs one sub-iteration per subset:
+
+\begin{equation}
+x_j^{(n,s+1)} = \frac{x_j^{(n,s)}}{\sum_{i \in S_s} P_{ij}} \sum_{i \in S_s} P_{ij} \frac{y_i}{\sum_{k=1}^{N} P_{ik} x_k^{(n,s)}}
+\end{equation}
+
+where $S_s$ denotes the $s$-th subset of LORs. After cycling through all $S$ subsets, one full iteration is complete. This approach provides approximately $S$ times faster convergence than MLEM in early iterations, though it does not guarantee convergence to the true maximum likelihood solution, as it converges on each subset stochastically.
+
+In our implementation, LORs are partitioned into subsets using sequential division (contiguous chunks of the LOR list). While more sophisticated partitioning strategies exist, such as angular interleaving to ensure each subset samples all projection angles, our approach is computationally efficient and provides good convergence for the continuous-coordinate list-mode data, which inherently lacks strong spatial ordering due to the randomness of radioactive decay detection times.
+
+\paragraph{List-mode coordinates implementation}
+Unlike traditional methods which bin LORs into sinogram-elements $(s, \phi, z)$, or list-mode detector IDs, our implementation operates directly on continuous LOR coordinates. Each event is represented by its endpoint positions 
+$\mathbf{r}_i^{(1)} = (x_1, y_1, z_1)$ and $\mathbf{r}_i^{(2)} = (x_2, y_2, z_2)$ in millimetres, preserving full geometric precision. This list-mode coordinate approach avoids discretisation artifacts inherent to binning and is especially advantageous for non-uniform sampling patterns or sparse data.
+
+In our list-mode formulation, each LOR $i$ represents a single detected coincidence event, thus $y_i = 1$ for all LORs $i \in \{1, \ldots, M\}$. This is equivalent to treating each stored event as having unit weight, which is natural for list-mode data where events are recorded individually rather than aggregated into bins. If multiple events share identical coordinates (within machine precision), they are still stored as separate entries rather than aggregated, maintaining the list-mode paradigm. This differs from sinogram and detector ID-based approaches where $y_i$ represents the total number of events in a particular bin $i$. Note this does not change the algorithm, it simply reflects a special case which allows the following simplification.
+
+With $y_i = 1$, our OSEM update simplifies to:
+
+\begin{equation}
+x_j^{(n,s+1)} = \frac{x_j^{(n,s)}}{\sum_{i \in S_s} P_{ij}} \sum_{i \in S_s} 
+\frac{P_{ij}}{\sum_{k=1}^{N} P_{ik} x_k^{(n,s)}}
+\end{equation}
+
+
+\paragraph{On-the-fly computation of system matrix elements}
+In our implementation, the system matrix $P_{ij}$ representing the probability that an emission from voxel $j$ is detected along LOR $i$ is never explicitly stored or precomputed. Instead, each matrix element is computed on-demand during forward and backprojection using Siddon's ray-tracing algorithm \cite{Siddon1985}. For each LOR, Siddon's method analytically determines the set of intersected voxels and the path length $\ell_{ij}$ through each voxel, such that:
+
+\begin{equation}
+P_{ij} \propto \ell_{ij}
+\end{equation}
+
+This matrix-free approach eliminates the prohibitive memory requirements of storing a sparse matrix with dimensions $M \times N$ (typically $10^8 \times 10^6$ for clinical PET), at the cost of recomputing projections at each iteration. The computational overhead is mitigated through GPU parallelisation using CUDA kernels, enabling efficient batch processing of LORs.
+
+\paragraph{Convergence and stopping criteria}
+In practice, a fixed number of iterations (often 2-4 iterations with 21 subsets, or 4-8 iterations with 8-12 subsets for faster iteration times). OSEM does not guarantee monotonic convergence, and running too many iterations can amplify noise. Optimal stopping depends on count statistics, with higher-count studies benefiting from more iterations. Automatic stopping criteria such as normalised root-mean-square error between successive iterations could be implemented, though fixed iteration counts are standard in clinical practice and provide reproducible results. - HAVE TO ADDRESS HOW MANY ITERATIONS AND SUBSETS WE WANT/USE
+
+\section{Image corrections}
+\label{sec:corrections}
+The following section outlines corrections considered in the process of image reconstruction for the most accurate results, and how they have been accounted for in our implementation.
+
+
+\subsection{Singles rejection}
+\label{sec:singles}
+In conventional PET, single events (detected photons whose annihilation partner was absorbed, scattered out of the field of view, or otherwise missed) are implicitly excluded from the data by the coincidence timing window. Only photon pairs arriving within the narrow coincidence window ($\sim$few nanoseconds) are recorded as LORs; unpaired detections are discarded at the hardware level and never enter the reconstruction pipeline.
+
+In our system, the machine learning model receives the raw optical flash produced in the scintillator for every detected event, regardless of whether it originated from a true coincidence or a single. The model performs binary classification, labelling each event as either a coincidence or a single. Events classified as singles are filtered out before LOR formation, so they do not enter the reconstruction. This achieves the same practical outcome as hardware coincidence gating, singles are excluded from the list-mode data, but through learned classification on the scintillation signal rather than temporal coincidence logic.
+
+\subsection{Random coincidences}
+\label{sec:randoms}
+Random coincidences occur in conventional PET when two photons from different annihilation events are detected within the coincidence timing window and falsely paired as a single LOR. These events introduce a spatially uniform background that degrades contrast and quantitative accuracy. Standard correction methods include the delayed coincidence window technique and the singles-rate estimation $R_{ij} = 2\tau S_i S_j$, where $\tau$ is the coincidence window width and $S_i$, $S_j$ are the singles rates at detectors $i$ and $j$.
+
+In our framework, LOR endpoint coordinates are predicted by a machine learning model trained on simulation data where true event pairings are known. The model does not produce mispaired LORs in the traditional sense, as each training example corresponds to a single annihilation event with known ground-truth interaction positions. However, when two annihilation events occur in close temporal proximity, their scintillation light overlaps within the optical detection window. In this case, each event still generates a separate training example (triggered by its own coincident pair entering the scintillator), but the optical flash observed by the model is contaminated by the concurrent event. The model must therefore resolve the interaction positions of one annihilation pair from a superposition of two overlapping optical signals.
+
+Randoms correction is thus implicitly delegated to the ML model: rather than an explicit additive correction term in the forward model, the model's ability to predict accurate positions despite optical pile-up determines the effective randoms handling. The extent to which the model is robust to such pile-up, whether it successfully resolves individual events or produces spatially degraded predictions, has not yet been characterised and remains a subject of future investigation. Quantifying this effect (e.g.\ by evaluating reconstruction quality as a function of simulated activity concentration, and hence pile-up probability) would clarify the practical limits of this implicit correction mechanism.
+
+
+\subsection{Sensitivity correction}
+\label{sec:sensitivity}
+The sensitivity of a PET scanner describes the detection probability for emissions from each voxel, accounting for geometric coverage and (optionally) attenuation. Not all regions within the scanner are equally visible to the detector array. Regions near the geometric center can be intersected by many more detector pairs, while regions near the field-of-view boundaries - particularly the axial edges - have reduced coverage due to limited angular sampling and shallow intersection angles.
+
+The sensitivity image is computed as:
+
+\begin{equation}
+S_j = \sum_{i=1}^{M_{\text{scanner}}} P_{ij}
+\end{equation}
+
+where the sum is taken over all geometrically possible LORs in the scanner. To compute this, we generate a uniform grid of virtual detector positions on the inner surface of the scanner and form all unique LOR pairs (excluding reciprocal pairs since LOR $i: a \to b$ is equivalent to $b \to a$). Each virtual LOR is then backprojected using Siddon ray tracing to accumulate path lengths through each voxel, yielding the sensitivity map. This process is performed once as a preprocessing step and the resulting $S_j$ is stored for use in both UFB normalization and OSEM updates. There may very well be a closed form geometric solution to evaluate the geometric sensitivity of any clinidrical geometry with finite axial length, removing the need for this psudo-detector array and backprojection step, but we have not pursued this solution as a backprojected estimation reflects trusted real world workflows.  
+
+When attenuation correction is enabled, the sensitivity becomes attenuation-weighted:
+
+\begin{equation}
+S_j = \sum_{i=1}^{M_{\text{scanner}}} a_i P_{ij}
+\end{equation}
+
+where $a_i = \exp\left(-\int_{\text{LOR}_i} \mu(\mathbf{r}) \, d\mathbf{r}\right)$ accounts for the reduced detection probability due to photon attenuation along LOR $i$. This ensures that the reconstruction properly weights contributions from regions with high attenuation.
+
+\subsection{Attenuation correction}
+\label{sec:attenuation}
+Naturally, photons travelling through any medium are subject to the probability of attenuation via photoelectric absorption and Compton scattering in accordance with the Beer-Lambert Law and the Klein Nishina formula, reducing the probability of coincidence detection. For a LOR passing through any material (e.g. tissue) with spatially-varying linear attenuation coefficient $\mu(\mathbf{r})$ (units: mm$^{-1}$ in our implementation), the fraction of unattenuated coincident photon pairs is:
+
+\begin{equation}
+a_i = \exp\left(-\int_{\text{LOR}_i} \mu(\mathbf{r}) \, d\mathbf{r}\right)
+\end{equation}
+
+This attenuation correction factor (ACF) accounts for the fact that both 511 keV photons must traverse the tissue without interaction to be detected in a true coincidence.
+
+The attenuation map $\mu(\mathbf{r})$ is typically obtained from a CT scan (in clinical PET/CT systems), a transmission scan using an external radioactive source, or synthetically generated for simulation studies. In our implementation, the line integral along each LOR is computed using Siddon ray tracing through the discrete attenuation map, yielding per-LOR correction factors $a_i$ that are incorporated into the forward model as:
+
+\begin{equation}
+\bar{y}_i = a_i \sum_{k=1}^{N} P_{ik} x_k
+\end{equation}
+
+When attenuation correction is applied, the sensitivity map is computed as the attenuation-weighted backprojection $S_j = \sum_i a_i P_{ij}$, ensuring proper normalisation of the reconstruction.
+
+
+\subsection{Scatter correction: Single Scatter Simulation (SSS)}
+\label{sec:sss}
+Scattered photons that are incorrectly assigned as true coincidences degrade image quality and quantitative accuracy. Single Scatter Simulation (SSS) \cite{Watson1996} estimates the scatter contribution by modeling single-scatter 
+events: one photon travels unscattered from emission point to detector while the other scatters once before detection.
+
+For computational efficiency, SSS is computed on coarse grids rather than continuous coordinates. Since a single-scatter event is symmetric (one photon may travel unscattered to detector $A$ while the other scatters at $S$ en route to detector $B$, or vice versa), the estimated scatter contribution for detector pair $(A, B)$ sums over all potential scatter points $S$ and both cases:
+
+\begin{equation}
+s_{AB} = \sum_S n_e(S) \cdot \sigma_{KN}\!\left(\theta_{AB}^S\right) \cdot G(S,A,B) \cdot \Delta V \cdot
+\Bigl[\Lambda_A(S)\cdot\exp(-\mu_{SB}) + \Lambda_B(S)\cdot\exp(-\mu_{SA})\Bigr]
+\end{equation}
+
+where $\Lambda_D(S)$ is the attenuation-weighted activity line integral from detector $D$ toward scatter point $S$:
+
+\begin{equation}
+\Lambda_D(S) = \int_{D \to S} \lambda(\mathbf{r})\,\exp\!\left(-\int_D^{\mathbf{r}} \mu(\mathbf{r}')\,dl'\right)dl
+\end{equation}
+
+This term captures the expected emission contribution at each point along the path from $D$ to $S$, weighted by the attenuation the unscattered photon would suffer travelling back to detector $D$. The remaining terms are: $\sigma_{KN}(\theta_{AB}^S)$ is the Klein-Nishina differential cross-section at the scattering angle $\theta_{AB}^S$ subtended at $S$ between detectors $A$ and $B$; $\exp(-\mu_{SB})$ (or $\exp(-\mu_{SA})$) is the attenuation of the scattered photon travelling from $S$ to its detector; $G(S,A,B) = 1/(r_{SA}^2\,r_{SB}^2)$ is a geometric solid-angle factor accounting for inverse-square falloff along both paths; $n_e(S)$ is the electron density at the scatter point; and $\Delta V$ is the volume element per scatter point.
+
+Two standard approximations are employed. First, electron density is not measured directly but is derived from the attenuation map as $n_e(S) = \mu(S)/\mu_{\text{water}}$, where $\mu_{\text{water}} = 9.597\times10^{-3}$\,mm$^{-1}$ is the linear attenuation coefficient of water at 511\,keV, normalising to unity for water-equivalent tissue. Second, following the standard Watson SSS approximation \cite{Watson1996}, the per-scatter-point attenuation factor $\exp(-\mu_{ES})$ for each individual candidate emission location $E$ along the unscattered path is not computed as a separate nested integral within $\Lambda_D(S)$; avoiding this nested double line-integral is consistent with established SSS practice, and the dominant attenuation effect - along the unscattered photon path from its emission location back to detector $D$ - is fully captured by the $\Lambda_D(S)$ term.
+
+In our implementation, scatter estimates $s_i$ are computed using SSS on a coarse detector grid ($N_{\text{angular}} = 32$, $N_{\text{axial}} = 15$) and coarse scatter point grid (factor 8 downsampling). The computation proceeds as:
+
+\begin{enumerate}
+    \item Scatter contributions are accumulated into a 4D sinogram parameterized by $(s, \phi, z_{\text{avg}}, z_{\text{diff}})$
+    \item The scatter sinogram is smoothed with a Gaussian filter to exploit the intrinsic smoothness of scatter
+    \item Tail fitting (described below) calibrates the absolute scatter magnitude
+    \item Per-LOR scatter estimates $s_i$ are obtained by 4D linear interpolation (using RegularGridInterpolator) from the coarse sinogram to each measured LOR's continuous coordinates $(s_i, \phi_i, z_{\text{avg},i}, z_{\text{diff},i})$, computed using the same sinogram parameterization as in classical PET
+\end{enumerate}
+
+While SSS uses sinogram binning for computational efficiency, the final output integrates seamlessly with the list-mode reconstruction as per-LOR estimates.
+
+\subsection{Scatter correction: Tail fitting}
+\label{sec:tail-fitting}
+Tail fitting \cite{Ollinger2002} is an empirical method for calibrating scatter estimates by exploiting the fact that LORs passing outside the known bounds of the scanned object contain only scattered events (no true coincidences). For a cylindrical object of radius $r_{\text{object}}$, sinogram elements with a radial offset $|s| > r_{\text{object}}$ should theoretically contain zero true events.
+
+In practice, the measured counts in these "tail" regions are:
+
+\begin{equation}
+y_i^{\text{tail}} = s_i^{\text{tail}} \quad \text{for } |s_i| > r_{\text{object}}
+\end{equation}
+
+By comparing the measured tail counts to the scatter simulation estimates in the same region, a global scaling factor $k$ is computed:
+
+\begin{equation}
+k = \frac{\sum_{i \in \text{tail}} y_i}{\sum_{i \in \text{tail}} s_i^{\text{SSS}}}
+\end{equation}
+
+This factor is then applied to uniformly scale the entire scatter sinogram. Per-LOR scatter corrections $s_i$ are subsequently obtained by interpolating from the scaled sinogram to each measured LOR's continuous coordinates $(s, \phi, z_{\text{avg}}, z_{\text{diff}})$ using linear interpolation.
+
+Tail fitting corrects for systematic errors in scatter modeling (such as uncertainties in scatter cross-sections, object composition, or coarse discretization in SSS) and ensures that the total scatter magnitude matches the measured data.
+
+
+\section{Continuous-Position Ordered Subset Expectation Maximisation with Corrections}
+\label{sec:osem-corrections}
+Our implementation incorporates attenuation and scatter corrections directly into the forward model. The predicted counts for LOR $i$ are modeled as:
+
+\begin{equation}
+\bar{y}_i = a_i \sum_{k=1}^{N} P_{ik} x_k + s_i
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $a_i = \exp\left(-\int_{\text{LOR}_i} \mu(\mathbf{r}) \, d\mathbf{r}\right)$ is the attenuation correction factor (ACF) for LOR $i$, computed via Siddon ray tracing through the attenuation map $\mu(\mathbf{r})$
+    \item $s_i$ is the scatter estimate for LOR $i$, computed using Single Scatter Simulation (SSS) \cite{Watson1996}
+\end{itemize}
+
+The OSEM update for subset $S_s$ becomes:
+
+With $y_i = 1$ (list-mode), the OSEM update simplifies to:
+
+\begin{equation}
+x_j^{(n,s+1)} = \frac{x_j^{(n,s)}}{S_j^{(s)}} \sum_{i \in S_s}
+\frac{a_i \cdot \ell_{ij}}{a_i \sum_{k=1}^{N} \ell_{ik} x_k^{(n,s)} + s_i}
+\end{equation}
+
+where we have made explicit that $P_{ij} = \ell_{ij}$ (path length through voxel $j$ for LOR $i$). The factor $a_i$ appears in both the numerator (as an attenuation-weighted backprojection weight) and the denominator (as part of the attenuated forward model). The scatter estimate $s_i$ from SSS is post-attenuation (already includes attenuation along the scatter path), so it is added directly to the forward model without further attenuation weighting.
+
+In our implementation, rather than recomputing sensitivity for each subset, we scale the precomputed global sensitivity by the subset fraction:
+
+\begin{equation}
+S_j^{(s)} \approx S_j \cdot \frac{|S_s|}{M}
+\end{equation}
+
+This approximation is valid when LORs are uniformly distributed across subsets and provides significant computational savings. Note that when attenuation correction is enabled, the sensitivity image becomes attenuation-weighted, accounting for the reduced detection probability of emissions from regions with high attenuation.
+
+\paragraph{GPU-accelerated computation}
+All projection operations are implemented as CUDA kernels executing on a GPU. 
+For each subset iteration:
+
+\begin{enumerate}
+    \item \textbf{Forward projection:} Each LOR is processed by a single GPU thread, which traces the ray through the voxel grid using Siddon's algorithm and computes the line integral $\sum_k P_{ik} x_k$.
+
+    \item \textbf{Ratio computation:} The correction factors $a_i$ and $s_i$ are applied to compute the per-LOR ratio $r_i = a_i / (a_i \sum_k \ell_{ik} x_k + s_i)$, where $y_i = 1$ in list-mode. This ratio accounts for both attenuation (via $a_i$ in numerator and denominator) and post-attenuation scatter (via $s_i$ in denominator).
+
+    \item \textbf{Weighted backprojection:} Each LOR backprojects its ratio $r_i$ weighted by the path length $\ell_{ij}$ through each voxel (yielding the full attenuation-weighted contribution $a_i \ell_{ij} / \bar{y}_i$ per voxel), accumulating contributions via atomic operations to handle race conditions from multiple threads writing to the same voxel.
+\end{enumerate}
+
+LORs are processed in batches ($10^6$ per batch) to balance GPU memory constraints with kernel launch overhead. An entire dataset of $\mathcal{O}(10^7-10^8)$ LORs can be processed within seconds per subset iteration.
+
+
