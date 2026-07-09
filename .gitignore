@@ -8,3 +8,8 @@ outputs/
 
 # Large binary inputs (65 MB — use git-lfs if you want this versioned)
 water_attenuation_map.npy
+
+# Build artifacts
+*.egg-info/
+build/
+dist/
