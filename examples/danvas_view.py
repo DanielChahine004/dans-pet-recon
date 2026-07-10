@@ -19,14 +19,8 @@ from collections import deque
 from dataclasses import asdict, fields as dc_fields
 from pathlib import Path
 
-import matplotlib
 import numpy as np
 import danvas
-from matplotlib import font_manager
-from PIL import Image as PILImage, ImageDraw, ImageFont
-
-HOT = matplotlib.colormaps["hot"]
-FONT = ImageFont.truetype(font_manager.findfont("DejaVu Sans"), 16)
 
 from petrecon import ReconConfig
 from petrecon.helpers.data_io import load_lors
@@ -59,53 +53,28 @@ current_vol = {"vol": None, "voxel": 1.0}   # full-res volume, shared with the s
 
 
 def show_volume(recon, voxel_mm):
+    # Native resolution: danvas quantizes the volume to uint8 on the wire
+    # (256³ ≈ 17 MB, a one-shot push per recon), so no downsampling — the
+    # Items row then always reads the true reconstruction grid.
     recon = recon.astype(np.float32)
     current_vol["vol"] = recon
     current_vol["voxel"] = voxel_mm
-    ds = 2 if max(recon.shape) >= 256 else 1   # keep the wire payload modest
-    vol = recon
-    if ds > 1:
-        # Max-pool rather than stride: strided slicing ([::2]) drops ~7/8 of the
-        # voxels of a 1-voxel-thin structure (e.g. a single backprojected LOR),
-        # making a continuous line render dotted. Max-pooling inspects every
-        # voxel, so thin hot features survive the downsample.
-        nx, ny, nz = (s // ds for s in vol.shape)
-        vol = (vol[:nx * ds, :ny * ds, :nz * ds]
-               .reshape(nx, ds, ny, ds, nz, ds).max(axis=(1, 3, 5)))
-    spacing = (voxel_mm * ds * MM,) * 3
+    spacing = (voxel_mm * MM,) * 3
     origin = tuple(-n * voxel_mm * MM / 2 for n in recon.shape)  # grid is scanner-centered
-    viewer.layer("recon").volume(vol, spacing=spacing, origin=origin, cmap="hot")
+    viewer.layer("recon").volume(recon, spacing=spacing, origin=origin, cmap="hot")
     sync_slice_controls()
 
 
 # ---- Slice viewer (full-resolution, beneath the 3D panel) ---------------------------
 PLANES = {"xy": 2, "xz": 1, "yz": 0}   # plane -> axis index to slice along
 
-slice_img = canvas.image(np.zeros((8, 8), dtype=np.uint8), name="slice_view",
-                         below=viewer, w=460, h=460)
+slice_hm = canvas.heatmap("slice_view", below=viewer, w=520, h=460)
 plane_sel = canvas.toggle(list(PLANES), name="slice_plane", label="Slice plane",
-                          right_of=slice_img)
+                          right_of=slice_hm)
 slice_idx = canvas.slider("slice_idx", label="Slice index", min=0, max=255, default=128,
                           below=plane_sel, w=380)
 slice_pos = canvas.label("slice_pos", "no volume yet — Run a reconstruction",
                          below=slice_idx, w=380, h="auto")
-
-
-def _add_scalebar(rgb, voxel_mm):
-    """Upscale for crisp text, then draw a round-length scale bar bottom-left."""
-    h, w = rgb.shape[:2]
-    up = max(1, round(512 / w))
-    img = PILImage.fromarray(rgb).resize((w * up, h * up), PILImage.NEAREST)
-    px_per_mm = up / voxel_mm
-    bar_mm = next(b for b in (200, 100, 50, 20, 10, 5, 2, 1)
-                  if b * px_per_mm <= 0.35 * img.width)
-    bar_px = round(bar_mm * px_per_mm)
-    m = max(10, img.width // 40)                       # margin
-    y = img.height - m
-    draw = ImageDraw.Draw(img)
-    draw.rectangle([m, y - 5, m + bar_px, y], fill=(255, 255, 255))
-    draw.text((m, y - 27), f"{bar_mm} mm", font=FONT, fill=(255, 255, 255))
-    return img
 
 
 def update_slice():
@@ -115,10 +84,12 @@ def update_slice():
     axis = PLANES[plane_sel.value]
     k = min(int(slice_idx.value), vol.shape[axis] - 1)
     sl = np.take(vol, k, axis=axis)
-    vmax = float(vol.max()) or 1.0
-    # transpose + flip so the first plane axis runs right and the second runs up
-    rgb = (HOT((sl / vmax).T[::-1])[..., :3] * 255).astype(np.uint8)
-    slice_img.update(_add_scalebar(rgb, current_vol["voxel"]))
+    a, b = (i for i in range(3) if i != axis)       # in-plane axes: a → right, b → up
+    vox = current_vol["voxel"]
+    half_a, half_b = (vol.shape[i] * vox / 2 for i in (a, b))
+    # rows flipped so +b runs up; heatmap extent y labels top row first
+    slice_hm.update(sl.T[::-1], vmin=0.0, vmax=float(vol.max()) or 1.0,
+                    cmap="hot", extent=(-half_a, half_a, half_b, -half_b))
     mm = (k + 0.5 - vol.shape[axis] / 2) * current_vol["voxel"]
     slice_pos.update(f"{plane_sel.value} slice {k}/{vol.shape[axis] - 1} — "
                      f"{'xyz'[axis]} = {mm:+.1f} mm (full resolution)")
