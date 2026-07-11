@@ -77,9 +77,21 @@ def estimate_scatter(activity, mumap_per_mm, fov_mm=256.0, downsample_to_mm=8.0,
     detector pair, shape (radial, angular, ring_pairs). ~40 s at defaults."""
     Path(save_path).mkdir(parents=True, exist_ok=True)
     geom, normals, det_size, lorc, sino_idx = build_geometry()
-    ds = max(1, int(round(downsample_to_mm / (fov_mm / activity.shape[0]))))
-    act = _pool(activity.astype(np.float64), ds)
-    mu = _pool(mumap_per_mm.astype(np.float64) * 10.0, ds)   # 1/mm -> 1/cm
+    # pool EACH map by its own factor: activity and mu-map may arrive at
+    # different grids, and openSSS needs them at the same (coarse) size —
+    # also, its tissue-classification loop is pure Python, so a map left at
+    # high resolution hangs it for hours
+    ds_act = max(1, int(round(downsample_to_mm / (fov_mm / activity.shape[0]))))
+    ds_mu = max(1, int(round(downsample_to_mm / (fov_mm / mumap_per_mm.shape[0]))))
+    act = _pool(activity.astype(np.float64), ds_act)
+    mu = _pool(mumap_per_mm.astype(np.float64) * 10.0, ds_mu)   # 1/mm -> 1/cm
+    if act.shape != mu.shape:
+        raise ValueError(f"pooled map shapes differ: activity {act.shape} vs "
+                         f"mu {mu.shape} — activity/mu grids must both divide "
+                         f"down to {downsample_to_mm} mm voxels")
+    if max(mu.shape) > 48:
+        raise ValueError(f"pooled maps too large ({mu.shape}) — openSSS's "
+                         f"tissue classification is pure Python; keep <= 48^3")
     half_cm = fov_mm / 20.0
     image_size = np.array([-half_cm] * 3 + [half_cm] * 3)
     table = np.load(Path(OPENSSS_PATH) / "openSSS/AttenuationTable_AttenuationTable.npy")
@@ -147,6 +159,15 @@ def tail_fit_scale(scatter_full, lors_mm, activity, fov_mm=256.0,
         pts = p1[..., None, :] + t[:, None] * (p2 - p1)[..., None, :]
         ijk = np.clip(np.round(pts / vox + (n - 1) / 2).astype(int), 0, n - 1)
         return act[ijk[..., 0], ijk[..., 1], ijk[..., 2]].max(axis=-1) < thr
+
+    support_frac = float((act > thr).mean())
+    if support_frac > 0.5:
+        # a blurry low-count/low-res activity (e.g. a coarse pre-pass) makes
+        # "support" swallow the FOV and the tail set meaningless — refuse
+        # rather than fit garbage (caller falls back to the manual fraction)
+        print(f"tail fit refused: activity support covers {support_frac:.0%} "
+              f"of the FOV (need a sharper activity estimate, e.g. grid >= 128)")
+        return None, 0.0
 
     tails = is_tail(lors_mm[:, :3].astype(np.float64), lors_mm[:, 3:].astype(np.float64))
     n_tail = int(tails.sum())

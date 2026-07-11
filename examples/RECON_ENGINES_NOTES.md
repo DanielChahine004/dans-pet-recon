@@ -112,6 +112,17 @@ implements the textbook OSEM update around OMEGA's operators.
   scatter); scatter correction is expected to matter more for unfiltered or
   ML-predicted (`iec_prediction_filtered.csv`) events.
 
+## Fragility guards (added 2026-07-12 after the grid-64 hang)
+
+- `estimate_scatter` pools activity and mu-map **each by its own factor** to
+  the target coarse voxel (they arrive at different grids); asserts the pooled
+  shapes match and stay <= 48³ — openSSS's tissue classification is pure
+  Python and a 128³ map wedges it for hours (the original bug: mu pooled by
+  the activity's factor).
+- `tail_fit_scale` refuses (returns None -> manual fallback) when activity
+  support covers > 50% of the FOV — a blurry coarse pre-pass (e.g. grid 64)
+  makes the tail set meaningless. Tail fitting wants grid >= 128.
+
 ## Tail-fit scaling: field convention (researched 2026-07-12)
 
 - Standard practice (Watson SSS -> STIR -> vendors): tails are **auto-detected
