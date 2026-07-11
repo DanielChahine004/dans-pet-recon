@@ -14,3 +14,4 @@ water_attenuation_map.npy
 build/
 dist/
 example_output/
+example_output_compare/
