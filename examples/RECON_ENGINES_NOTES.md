@@ -112,6 +112,23 @@ implements the textbook OSEM update around OMEGA's operators.
   scatter); scatter correction is expected to matter more for unfiltered or
   ML-predicted (`iec_prediction_filtered.csv`) events.
 
+## Tail-fit scaling: field convention (researched 2026-07-12)
+
+- Standard practice (Watson SSS -> STIR -> vendors): tails are **auto-detected
+  from the attenuation image** — LORs with ACF < ~1.1 (STIR default) are
+  outside the object. Never manual bounding; the mu-map is the object
+  definition. Scale = fit of scatter to (prompts − randoms) within the mask,
+  classically per plane / per TOF bin.
+- openSSS: `GenerateTailsMask` ray-traces detector pairs through the
+  attenuation map (`UseAttenuation=True` default; activity-map fallback
+  exists — same as our bridge's approach); `BackProjectionScatterRandFit`
+  backprojects tail-masked prompts/scatter/randoms and least-squares fits a
+  single global scale per TOF bin.
+- For us: the all-FOV water mu-map is why attenuation tails don't exist here.
+  TODO: build a phantom-shaped mu-map (IEC geometry is in the GATE macro),
+  then per-event tails = ACF < 1.1 via petrecon's `compute_acf` — noiseless
+  and standard. Include a randoms term in the fit for unfiltered data.
+
 ## Future work
 
 - Iterate the openSSS estimate every N OSEM iterations (like petrecon's
