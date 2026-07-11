@@ -37,11 +37,11 @@ from openSSS.Sinogram import SinogramCoordinates
 from openSSS.SingleScatterSimulationTOF import SingleScatterSimulationTOF
 from openSSS.Interpolation import InterpolateScatters
 
-# ---- petrecon's default scanner --------------------------------------------------
-RINGS, DETS = 40, 400
-INNER_RADIUS_MM = 235.422
-AXIAL_MM = 296.0
-PITCH_Z_MM = AXIAL_MM / RINGS
+# ---- petrecon's default scanner (single source of truth: scanner.py) -------------
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from scanner import (RINGS, DETS_PER_RING as DETS, INNER_RADIUS_MM, AXIAL_MM,
+                     PITCH_Z_MM, SECTORS_TRANS, MODULES_TRANS, CRYSTALS_TRANS,
+                     SECTORS_AXIAL, MODULES_AXIAL, CRYSTALS_AXIAL)
 
 
 def build_geometry():
@@ -59,8 +59,10 @@ def build_geometry():
     normals[..., 1] = -np.sin(theta)[None, :]
     det_size = np.array([2 * np.pi * r_cm / DETS, pitch_cm])
     lorc, sino_idx, _ = SinogramCoordinates(
-        NrSectorsTrans=40, NrSectorsAxial=1, NrModulesAxial=4, NrModulesTrans=1,
-        NrCrystalsTrans=10, NrCrystalsAxial=10, MinSectorDifference=0, ID_Shidt=False)
+        NrSectorsTrans=SECTORS_TRANS, NrSectorsAxial=SECTORS_AXIAL,
+        NrModulesAxial=MODULES_AXIAL, NrModulesTrans=MODULES_TRANS,
+        NrCrystalsTrans=CRYSTALS_TRANS, NrCrystalsAxial=CRYSTALS_AXIAL,
+        MinSectorDifference=0, ID_Shidt=False)
     return geom, normals, det_size, lorc.astype(int), sino_idx
 
 
@@ -81,6 +83,9 @@ def estimate_scatter(activity, mumap_per_mm, fov_mm=256.0, downsample_to_mm=8.0,
     # different grids, and openSSS needs them at the same (coarse) size —
     # also, its tissue-classification loop is pure Python, so a map left at
     # high resolution hangs it for hours
+    if float(np.nanmax(mumap_per_mm)) > 0.05:
+        raise ValueError(f"mu-map max {np.nanmax(mumap_per_mm):.3g} looks like 1/cm "
+                         f"units — this function expects 1/mm (water ~ 0.0096)")
     ds_act = max(1, int(round(downsample_to_mm / (fov_mm / activity.shape[0]))))
     ds_mu = max(1, int(round(downsample_to_mm / (fov_mm / mumap_per_mm.shape[0]))))
     act = _pool(activity.astype(np.float64), ds_act)

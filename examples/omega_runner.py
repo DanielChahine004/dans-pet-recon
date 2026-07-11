@@ -39,6 +39,9 @@ sys.modules["arrayfire"] = _af
 sys.modules["arrayfire.device"] = _dev
 
 import numpy as np
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import scanner as SC
 from omegatomo.projector import proj
 
 cfg = pickle.load(open(sys.argv[1], "rb"))
@@ -47,19 +50,24 @@ grid = int(cfg["grid"])
 print(f"OMEGA: {len(lors)} LORs, grid {grid}^3, "
       f"{cfg['iterations']} iterations x {cfg['subsets']} subsets")
 
+if cfg.get("scatter_npy") and not cfg.get("sens_npy"):
+    sys.exit("OMEGA runner: scatter correction requires a geometric sensitivity "
+             "image (sens_npy) — with sens=ones the forward model is not at "
+             "count scale and the correction is a silent no-op")
+
 options = proj.projectorClass()
-# Scanner: uniform cylinder matching petrecon's defaults (40 rings x 400 dets)
-options.blocks_per_ring = 40
-options.cryst_per_block = 10
-options.linear_multip = 4
-options.cryst_per_block_axial = 10
-options.diameter = 2 * 235.422                # inner radius, mm
-options.cr_p = np.pi * 2 * 235.422 / 400      # transaxial crystal pitch
-options.cr_pz = 296.0 / 40                    # axial pitch
-options.det_per_ring = 400
-options.det_w_pseudo = 400
-options.rings = 40
-options.detectors = 16000
+# Scanner: uniform cylinder, constants from scanner.py (single source of truth)
+options.blocks_per_ring = SC.SECTORS_TRANS
+options.cryst_per_block = SC.CRYSTALS_TRANS
+options.linear_multip = SC.MODULES_AXIAL
+options.cryst_per_block_axial = SC.CRYSTALS_AXIAL
+options.diameter = 2 * SC.INNER_RADIUS_MM
+options.cr_p = np.pi * 2 * SC.INNER_RADIUS_MM / SC.DETS_PER_RING
+options.cr_pz = SC.PITCH_Z_MM
+options.det_per_ring = SC.DETS_PER_RING
+options.det_w_pseudo = SC.DETS_PER_RING
+options.rings = SC.RINGS
+options.detectors = SC.DETS_PER_RING * SC.RINGS
 # Image: 256 mm cube, same as petrecon's default FOV
 options.FOVa_x = 256.0
 options.FOVa_y = 256.0
@@ -95,6 +103,10 @@ scatter = None
 if cfg.get("scatter_npy"):
     s_np = np.load(cfg["scatter_npy"]).astype(np.float32)
     scatter = [cp.asarray(s_np[o]) for o in order]
+    m_s = float(s_np.mean())
+    if not (1e-4 < m_s < 2.0):
+        print(f"OMEGA WARNING: mean scatter {m_s:.3g} counts/event is outside "
+              f"the sane band (1e-4, 2) — check the scale", flush=True)
     print("OMEGA: external scatter estimate ON")
 
 # Sensitivity: either shared (petrecon's full-scanner geometric sensitivity,
@@ -146,3 +158,24 @@ img = cp.asnumpy(d_f).reshape((grid, grid, grid), order="F")
 np.save(cfg["out_npy"], img)
 print(f"OMEGA: max {img.max():.4g} at {np.unravel_index(np.argmax(img), img.shape)}")
 print(f"CORE_SECONDS={core:.3f}", flush=True)
+
+# provenance manifest next to the output
+import hashlib, json, subprocess as sp
+def _ver(mod):
+    try:
+        import importlib.metadata as md
+        return md.version(mod)
+    except Exception:
+        return "?"
+try:
+    sha = sp.run(["git", "-C", str(Path(__file__).resolve().parent), "rev-parse",
+                  "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+except Exception:
+    sha = "?"
+manifest = {"engine": "omega", "config": {k: str(v) for k, v in cfg.items()},
+            "core_seconds": round(core, 3),
+            "lors_md5": hashlib.md5(open(cfg["lors_npy"], "rb").read()).hexdigest(),
+            "versions": {m: _ver(m) for m in ("omegatomo", "cupy-cuda12x", "numpy")},
+            "pet_recon_git": sha, "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")}
+mpath = Path(cfg["out_npy"]).with_suffix(".manifest.json")
+mpath.write_text(json.dumps(manifest, indent=1))

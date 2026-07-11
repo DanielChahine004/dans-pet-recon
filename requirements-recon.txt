@@ -1,0 +1,16 @@
+omegatomo==2.2.0
+arrayfire==3.8.0
+cupy-cuda12x==13.6.0
+joblib==1.5.3
+numba==0.61.2
+numpy==2.2.0
+scipy==1.16.3
+matplotlib==3.11.0
+plotly==6.8.0
+danvas==0.6.0
+# Reconstruction-stack pins for the dual-engine + openSSS workflow.
+# omegatomo MUST be the PyPI wheel (git installs are broken — stale setup.py);
+# after installing in a new env run:
+#   python -c "from omegatomo.util.compile import compileOMEGA; compileOMEGA()"
+# Machine prerequisites (ArrayFire, CUDA headers): examples/setup_omega_wsl.sh
+# openSSS: git clone https://github.com/r-santo/openSSS /home/h/openSSS

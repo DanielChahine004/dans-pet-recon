@@ -123,6 +123,25 @@ implements the textbook OSEM update around OMEGA's operators.
   support covers > 50% of the FOV — a blurry coarse pre-pass (e.g. grid 64)
   makes the tail set meaningless. Tail fitting wants grid >= 128.
 
+## Anti-fragility layer (added 2026-07-12)
+
+- **`tests/test_engines.py`** — the invariant suite; run it after touching any
+  engine (`python -m unittest tests.test_engines -v`, ~5 s warm; the IEC
+  scatter-direction test needs `RECON_SLOW_TESTS=1`, ~45 s with caches).
+  Covers: off-center point-source position on both engines, cross-engine
+  agreement, bridge guards (shapes/size/units/tail refusal), runner aborts
+  on scatter-without-sensitivity, scanner.py <-> ReconConfig lockstep,
+  manifest presence.
+- **`examples/scanner.py`** — single source of truth for the geometry;
+  runners and bridge import it (a unit test pins it to petrecon defaults).
+- **Runtime guards**: both runners exit nonzero if scatter is requested
+  without geometric sensitivity, and warn when mean scatter/event is outside
+  (1e-4, 2). The bridge validates mu-map units (1/mm), matching pooled
+  shapes, and a <= 48^3 pooled-size ceiling.
+- **Provenance**: every runner writes a `manifest.json` next to its output —
+  package versions, config, input md5, pet-recon git SHA, timestamps.
+- **`requirements-recon.txt`** — pinned stack + per-env install notes.
+
 ## Tail-fit scaling: field convention (researched 2026-07-12)
 
 - Standard practice (Watson SSS -> STIR -> vendors): tails are **auto-detected
