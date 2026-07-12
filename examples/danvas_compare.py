@@ -616,6 +616,13 @@ def run_or_cancel():
         run_lock.release()
 
 
+# dispatch-trace panel: live view of which handlers each action fires, where
+# they run (inline/threaded/dedicated) and how long they take — the
+# observability twin of the threading layout above. deep=False keeps the
+# per-call overhead out of the heavy filter/update paths.
+canvas.trace(deep=False, below=profile_plot if profile_plot else hm_pr,
+             w=800, h=380)
+
 # ---- Initial state -------------------------------------------------------------
 # the binned panel hosts a CAD model of its equivalent scanner: the exact
 # crystal grid (400 x 40, real pitches and radii from scanner.py) that the
