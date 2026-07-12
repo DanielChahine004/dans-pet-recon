@@ -76,7 +76,7 @@ viewer_om = canvas.model3d("omega_3d", label="OMEGA", right_of=viewer_pr, w=620,
 viewer_bin = canvas.model3d("binned_3d", label="OMEGA binned (conventional)",
                             right_of=viewer_om, w=620, h=520)
 bin_dets = canvas.slider("bin_dets", label="Binned: transaxial crystals",
-                         min=50, max=800, step=2, default=400,
+                         min=48, max=800, step=4, default=400,
                          on_release=True, above=viewer_bin, w=300)
 bin_rings = canvas.slider("bin_rings", label="Binned: axial rings",
                           min=5, max=80, default=40,

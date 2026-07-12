@@ -64,6 +64,9 @@ voxel = FOV_MM / grid
 # physical scanner (the unbinned legs are invariant to this by construction)
 D = int(cfg.get("bin_dets") or SC.DETS_PER_RING)
 R = int(cfg.get("bin_rings") or SC.RINGS)
+if D % 4:
+    sys.exit(f"OMEGA-binned: transaxial crystal count {D} must be divisible "
+             f"by 4 — the sinogram angular interleave needs an even Nang (= D/2)")
 PITCH_Z = SC.AXIAL_MM / R
 nz_native = 2 * R - 1     # canonical sinogram-recon slice count (79):
 # reconstructing on a finer z grid starves the slices between the 3.7 mm
