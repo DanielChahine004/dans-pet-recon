@@ -617,6 +617,17 @@ def run_or_cancel():
 
 
 # ---- Initial state -------------------------------------------------------------
+# the binned panel hosts a CAD model of its equivalent scanner: the exact
+# crystal grid (400 x 40, real pitches and radii from scanner.py) that the
+# sinogram binning quantizes onto — toggle it in the panel's Items list
+try:
+    from scanner_mesh import crystal_grid_glb
+    viewer_bin.layer("scanner").update(
+        crystal_grid_glb(OUT / "scanner_crystals.glb"),
+        mesh_color=(115, 125, 145, 80))
+except Exception as _exc:
+    print(f"scanner CAD model skipped: {_exc}")
+
 update_lor_layers(len(data["lors"]))
 if (PR_OUT / "reconstruction_image.npy").exists() and OM_NPY.exists():
     vols["pr"] = np.load(PR_OUT / "reconstruction_image.npy").astype(np.float32)
