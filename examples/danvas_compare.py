@@ -83,8 +83,19 @@ slice_idx = canvas.slider("slice_idx", label="Slice index", min=0, max=255, defa
 slice_pos = canvas.label("slice_pos", "no volumes yet — Run a comparison",
                          right_of=slice_idx, w=380, h="auto")
 
-profile_plot = (canvas.plot(name="profiles", label="through-peak x profiles (normalized)",
+profile_plot = (canvas.plot(name="profiles", label="line profiles (normalized)",
                             below=plane_sel, w=800, h=340) if go else None)
+if profile_plot is not None:
+    prof_axis = canvas.toggle(["x", "y", "z"], name="profile_axis",
+                              label="Profile axis", right_of=profile_plot, w=300)
+    prof_mode = canvas.toggle(["peak", "manual"], name="profile_mode",
+                              label="Profile through", below=prof_axis, w=300)
+    prof_px = canvas.slider("profile_x", label="x (mm)", min=-127, max=127,
+                            default=0, below=prof_mode, w=300)
+    prof_py = canvas.slider("profile_y", label="y (mm)", min=-127, max=127,
+                            default=0, below=prof_px, w=300)
+    prof_pz = canvas.slider("profile_z", label="z (mm)", min=-127, max=127,
+                            default=0, below=prof_py, w=300)
 
 vols = {"pr": None, "om": None, "bin": None, "voxel": 1.0}
 
@@ -99,14 +110,17 @@ def update_lor_layers(n):
 
 
 def display_vmax(vol):
-    """Window at the lightly-smoothed maximum: isolated rogue voxels are
-    suppressed by smoothing (so they can't black out the display), while
-    genuine compact structures (a point source occupies only ~tens of
-    voxels — far below any percentile) keep their true scale. A raw
-    percentile window saturates the noise floor of sparse volumes."""
+    """Window at the raw max, unless it is anomalously far above the
+    lightly-smoothed max — the signature of isolated rogue voxels (which
+    would black out the display). Real compact structures survive smoothing
+    (ratio stays modest), so they keep the max window and the low-count
+    OSEM speckle stays visually subdued."""
     from scipy.ndimage import gaussian_filter
-    v = float(gaussian_filter(vol, 1.0).max())
-    return v if v > 0 else (float(vol.max()) or 1.0)
+    m = float(vol.max())
+    s = float(gaussian_filter(vol, 1.0).max())
+    if m <= 0:
+        return 1.0
+    return m if (s > 0 and m < 15 * s) else max(s, m * 1e-3)
 
 
 def show_volumes(voxel_mm):
@@ -161,24 +175,35 @@ def sync_slice_controls():
 
 
 def update_profiles():
-    if profile_plot is None or vols["pr"] is None or vols["om"] is None:
+    ref = vols["pr"] if vols["pr"] is not None else vols["om"]
+    if profile_plot is None or ref is None:
         return
-    peak = np.unravel_index(np.argmax(vols["pr"]), vols["pr"].shape)
     vox = vols["voxel"]
+    n = ref.shape[0]
+    if prof_mode.value == "peak":
+        pt = np.unravel_index(np.argmax(ref), ref.shape)
+    else:
+        pt = tuple(int(np.clip(round(float(s.value) / vox + n / 2 - 0.5), 0, n - 1))
+                   for s in (prof_px, prof_py, prof_pz))
+    axis = {"x": 0, "y": 1, "z": 2}[prof_axis.value]
     fig = go.Figure()
     for key, name in (("pr", "petrecon (unbinned)"), ("om", "OMEGA (unbinned)"),
                       ("bin", "OMEGA binned")):
         vol = vols[key]
         if vol is None:
             continue
-        prof = vol[:, peak[1], peak[2]] / (float(vol.max()) or 1.0)
-        x_mm = (np.arange(vol.shape[0]) + 0.5 - vol.shape[0] / 2) * vox
-        fig.add_trace(go.Scatter(x=x_mm, y=prof, name=name, mode="lines"))
-    fig.update_layout(xaxis_title="x (mm)", yaxis_title="normalized intensity",
-                      margin=dict(l=50, r=20, t=30, b=40),
-                      legend=dict(x=0.02, y=0.98))
-    fig.update_xaxes(range=[(peak[0] + 0.5 - vols["pr"].shape[0] / 2) * vox - 25,
-                            (peak[0] + 0.5 - vols["pr"].shape[0] / 2) * vox + 25])
+        idx = list(pt)
+        idx[axis] = slice(None)
+        prof = vol[tuple(idx)] / (float(vol.max()) or 1.0)
+        coords = (np.arange(vol.shape[axis]) + 0.5 - vol.shape[axis] / 2) * vox
+        fig.add_trace(go.Scatter(x=coords, y=prof, name=name, mode="lines"))
+    fixed = [f"{'xyz'[i]}={((pt[i] + 0.5 - n / 2) * vox):+.0f}mm"
+             for i in range(3) if i != axis]
+    fig.update_layout(
+        title=dict(text=f"{prof_axis.value}-profile through {', '.join(fixed)} "
+                        f"({prof_mode.value})", font=dict(size=13)),
+        xaxis_title=f"{prof_axis.value} (mm)", yaxis_title="normalized intensity",
+        margin=dict(l=50, r=20, t=40, b=40), legend=dict(x=0.02, y=0.98))
     profile_plot.update(fig)
 
 
@@ -310,6 +335,19 @@ def _(v):
 @slice_idx.on_change(dedicated=True, queue="latest")
 def _(v):
     update_slices()
+
+
+if profile_plot is not None:
+    @prof_axis.on_change
+    def _(v):
+        update_profiles()
+
+    @prof_mode.on_change
+    def _(v):
+        update_profiles()
+
+    for _s in (prof_px, prof_py, prof_pz):
+        _s.on_change(dedicated=True, queue="latest")(lambda v: update_profiles())
 
 
 class ProgressTap:
