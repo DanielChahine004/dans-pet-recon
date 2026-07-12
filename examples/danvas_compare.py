@@ -671,6 +671,10 @@ def run_or_cancel():
         status.color = (0, 200, 90)
         status.update(f"Comparison done in {time.time() - t0:.0f}s total — "
                       f"volumes, slices, diff and profiles updated")
+        try:
+            canvas.screenshot(path=str(OUT / "last_run_canvas.png"))
+        except Exception:
+            pass   # no tab connected — snapshot is best-effort
     except InterruptedError:
         progress.update(stage="cancelled", pct=0, active=False, failed=False)
         status.color = (255, 180, 0)
@@ -725,5 +729,25 @@ if (PR_OUT / "reconstruction_image.npy").exists() and OM_NPY.exists():
     show_volumes(vols["voxel"])
     update_profiles()
     status.update("showing last saved comparison — tune the config, then Run")
+
+# screenshot service: write a target path into TMP/danvas_compare_shot.txt
+# and the serving process captures the canvas there (needs an open browser
+# tab — danvas renders through the browser). Lets external tooling harvest
+# snapshots; each completed Run also auto-captures to the output dir.
+def _screenshot_service():
+    req = TMP / "danvas_compare_shot.txt"
+    while True:
+        time.sleep(2)
+        if req.exists():
+            try:
+                out = req.read_text().strip() or str(OUT / "canvas.png")
+                req.unlink()
+                canvas.screenshot(path=out)
+                print(f"screenshot -> {out}", flush=True)
+            except Exception as exc:
+                print(f"screenshot failed: {exc}", flush=True)
+
+
+threading.Thread(target=_screenshot_service, daemon=True).start()
 
 canvas.serve(port=8001, tunnel=True, password="petrecon")
