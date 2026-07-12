@@ -83,7 +83,7 @@ slice_idx = canvas.slider("slice_idx", label="Slice index", min=0, max=255, defa
 slice_pos = canvas.label("slice_pos", "no volumes yet — Run a comparison",
                          right_of=slice_idx, w=380, h="auto")
 smooth_sel = canvas.toggle(["off", "on"], name="display_filter", default="off",
-                           label="Display post-filter (Gaussian)",
+                           label="Display post-filter (Gaussian, all views)",
                            right_of=slice_pos, w=280)
 smooth_fwhm = canvas.slider("filter_fwhm", label="Post-filter FWHM (mm)",
                             min=1.0, max=12.0, step=0.5, default=4.0,
@@ -142,11 +142,12 @@ def display_vmax(vol):
     return float(vol.max()) or 1.0
 
 
-def show_volumes(voxel_mm):
-    _filter_cache.clear()
+def show_volumes(voxel_mm, fresh=True):
+    if fresh:
+        _filter_cache.clear()
     spacing = (voxel_mm * MM,) * 3
     for key, viewer in (("pr", viewer_pr), ("om", viewer_om), ("bin", viewer_bin)):
-        vol = vols[key]
+        vol = display_vol(key)
         if vol is None:
             continue
         origin = tuple(-n * voxel_mm * MM / 2 for n in vol.shape)
@@ -195,7 +196,7 @@ def sync_slice_controls():
 
 
 def update_profiles():
-    ref = vols["pr"] if vols["pr"] is not None else vols["om"]
+    ref = display_vol("pr") if vols["pr"] is not None else display_vol("om")
     if profile_plot is None or ref is None:
         return
     vox = vols["voxel"]
@@ -209,7 +210,7 @@ def update_profiles():
     fig = go.Figure()
     for key, name in (("pr", "petrecon (unbinned)"), ("om", "OMEGA (unbinned)"),
                       ("bin", "OMEGA binned")):
-        vol = vols[key]
+        vol = display_vol(key)
         if vol is None:
             continue
         idx = list(pt)
@@ -357,15 +358,22 @@ def _(v):
     update_slices()
 
 
+def _refresh_filtered():
+    if vols["pr"] is None and vols["om"] is None:
+        return
+    show_volumes(vols["voxel"], fresh=False)   # includes slices via sync
+    update_profiles()
+
+
 @smooth_sel.on_change(dedicated=True)
 def _(v):
-    update_slices()
+    _refresh_filtered()
 
 
 @smooth_fwhm.on_change(dedicated=True, queue="latest")
 def _(v):
     if smooth_sel.value == "on":
-        update_slices()
+        _refresh_filtered()
 
 
 if profile_plot is not None:
