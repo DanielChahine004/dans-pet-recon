@@ -321,6 +321,19 @@ with col:
 - Run button turns into **■ Cancel** while a comparison is in flight
 """, name="notes", h="auto")
 
+# ---- Conditional panel visibility ------------------------------------------------
+def show_panels(show, *panels):
+    for p in panels:
+        (canvas.unhide if show else canvas.hide)(p)
+
+
+# panels that only apply under an enabling toggle start hidden
+if profile_plot is not None:
+    show_panels(False, prof_px, prof_py, prof_pz)      # only in "manual" mode
+show_panels(False, smooth_fwhm)                        # only when filter is on
+show_panels(False, scatter_scale, scatter_frac)        # only when scatter is on
+
+
 # ---- Wiring -------------------------------------------------------------------
 run_lock = threading.Lock()
 current_proc = [None]
@@ -348,6 +361,11 @@ def _(v):
     status.update(f"{v}: {n:,} LORs loaded — hit Run to compare")
 
 
+@scatter_sel.on_change
+def _(v):
+    show_panels(v == "openSSS", scatter_scale, scatter_frac)
+
+
 @plane_sel.on_change
 def _(v):
     sync_slice_controls()
@@ -367,6 +385,7 @@ def _refresh_filtered():
 
 @smooth_sel.on_change(dedicated=True)
 def _(v):
+    show_panels(v == "on", smooth_fwhm)
     _refresh_filtered()
 
 
@@ -383,6 +402,7 @@ if profile_plot is not None:
 
     @prof_mode.on_change
     def _(v):
+        show_panels(v == "manual", prof_px, prof_py, prof_pz)
         update_profiles()
 
     for _s in (prof_px, prof_py, prof_pz):
