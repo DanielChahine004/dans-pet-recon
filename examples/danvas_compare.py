@@ -303,9 +303,9 @@ function Component({ props }) {
 }
 """
 
-# controls go to the right of the three 620-px viewers (was a fixed x=1330,
-# which sat underneath the third viewer)
-CTRL_X = 40 + 3 * (620 + 16) + 24
+# controls go to the right of the WIDEST row — now the five 400-px heatmaps
+# (slices + diff + sinogram), which outgrew the three 620-px viewers
+CTRL_X = 40 + 5 * (400 + 16) + 24
 col = canvas.column(x=CTRL_X, y=40, w=380, gap=14)
 section(col, "Data & run")
 with col:
