@@ -57,9 +57,14 @@ OUT.mkdir(exist_ok=True)
 data = {"lors": None, "perm": None}
 
 
+_dataset_cache = {}
+
+
 def load_dataset(name):
-    data["lors"] = load_lors(DATASETS[name]).astype(np.float32)
-    data["perm"] = np.random.default_rng(0).permutation(len(data["lors"]))
+    if name not in _dataset_cache:
+        lors = load_lors(DATASETS[name]).astype(np.float32)
+        _dataset_cache[name] = (lors, np.random.default_rng(0).permutation(len(lors)))
+    data["lors"], data["perm"] = _dataset_cache[name]
 
 
 load_dataset("point 0_0_0")
@@ -105,6 +110,7 @@ if profile_plot is not None:
 
 vols = {"pr": None, "om": None, "bin": None, "voxel": 1.0}
 _filter_cache = {}
+_filter_lock = threading.Lock()
 
 
 def display_vol(key):
@@ -116,12 +122,14 @@ def display_vol(key):
         return vol
     fwhm = float(smooth_fwhm.value)
     ck = (key, fwhm, id(vol))
-    if ck not in _filter_cache:
-        from scipy.ndimage import gaussian_filter
-        sigma = fwhm / 2.355 / vols["voxel"]
-        _filter_cache.clear() if len(_filter_cache) > 6 else None
-        _filter_cache[ck] = gaussian_filter(vol, sigma)
-    return _filter_cache[ck]
+    with _filter_lock:                       # serialize: no duplicate filtering
+        if ck not in _filter_cache:
+            from scipy.ndimage import gaussian_filter
+            sigma = fwhm / 2.355 / vols["voxel"]
+            if len(_filter_cache) > 6:
+                _filter_cache.clear()
+            _filter_cache[ck] = gaussian_filter(vol, sigma)
+        return _filter_cache[ck]
 
 
 def update_lor_layers(n):
@@ -366,7 +374,7 @@ def _(v):
     show_panels(v == "openSSS", scatter_scale, scatter_frac)
 
 
-@plane_sel.on_change
+@plane_sel.on_change(dedicated=True, queue="latest")
 def _(v):
     sync_slice_controls()
 
@@ -379,6 +387,12 @@ def _(v):
 def _refresh_filtered():
     if vols["pr"] is None and vols["om"] is None:
         return
+    if smooth_sel.value == "on":
+        # scipy's gaussian_filter releases the GIL: warm all three volumes'
+        # cache entries concurrently before any push
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            list(ex.map(display_vol, ("pr", "om", "bin")))
     show_volumes(vols["voxel"], fresh=False)   # includes slices via sync
     update_profiles()
 
@@ -396,11 +410,11 @@ def _(v):
 
 
 if profile_plot is not None:
-    @prof_axis.on_change
+    @prof_axis.on_change(dedicated=True, queue="latest")
     def _(v):
         update_profiles()
 
-    @prof_mode.on_change
+    @prof_mode.on_change(dedicated=True)
     def _(v):
         show_panels(v == "manual", prof_px, prof_py, prof_pz)
         update_profiles()
