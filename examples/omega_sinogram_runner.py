@@ -60,24 +60,37 @@ cfg = pickle.load(open(sys.argv[1], "rb"))
 lors = np.load(cfg["lors_npy"]).astype(np.float32)
 grid = int(cfg["grid"])
 voxel = FOV_MM / grid
-nz_native = 2 * SC.RINGS - 1     # canonical sinogram-recon slice count (79):
+# virtual-scanner overrides: bin onto a coarser/finer crystal grid than the
+# physical scanner (the unbinned legs are invariant to this by construction)
+D = int(cfg.get("bin_dets") or SC.DETS_PER_RING)
+R = int(cfg.get("bin_rings") or SC.RINGS)
+PITCH_Z = SC.AXIAL_MM / R
+nz_native = 2 * R - 1     # canonical sinogram-recon slice count (79):
 # reconstructing on a finer z grid starves the slices between the 3.7 mm
 # sinogram planes (zebra artifact); reconstruct natively, resample after
-print(f"OMEGA-binned: {len(lors)} LORs, grid {grid}^3 (native Nz {nz_native}, "
-      f"resampled), span 1, MLEM", flush=True)
+print(f"OMEGA-binned: {len(lors)} LORs, grid {grid}^3, virtual scanner "
+      f"{D}x{R} (native Nz {nz_native}, resampled), span 1, MLEM", flush=True)
 
 options = proj.projectorClass()
-options.blocks_per_ring = SC.SECTORS_TRANS
-options.cryst_per_block = SC.CRYSTALS_TRANS
-options.linear_multip = SC.MODULES_AXIAL
-options.cryst_per_block_axial = SC.CRYSTALS_AXIAL
+if D == SC.DETS_PER_RING and R == SC.RINGS:
+    # physical scanner: keep the validated block-faceted factorization
+    options.blocks_per_ring = SC.SECTORS_TRANS
+    options.cryst_per_block = SC.CRYSTALS_TRANS
+    options.linear_multip = SC.MODULES_AXIAL
+    options.cryst_per_block_axial = SC.CRYSTALS_AXIAL
+else:
+    # virtual scanner: uniform polygon ring, one crystal per block
+    options.blocks_per_ring = D
+    options.cryst_per_block = 1
+    options.linear_multip = R
+    options.cryst_per_block_axial = 1
 options.diameter = 2 * SC.INNER_RADIUS_MM
-options.cr_p = np.pi * 2 * SC.INNER_RADIUS_MM / SC.DETS_PER_RING
-options.cr_pz = SC.PITCH_Z_MM
-options.det_per_ring = SC.DETS_PER_RING
-options.det_w_pseudo = SC.DETS_PER_RING
-options.rings = SC.RINGS
-options.detectors = SC.DETS_PER_RING * SC.RINGS
+options.cr_p = np.pi * 2 * SC.INNER_RADIUS_MM / D
+options.cr_pz = PITCH_Z
+options.det_per_ring = D
+options.det_w_pseudo = D
+options.rings = R
+options.detectors = D * R
 options.FOVa_x = FOV_MM
 options.FOVa_y = FOV_MM
 options.axial_fov = SC.AXIAL_MM          # full scanner; image cropped after
@@ -90,10 +103,10 @@ options.Nz = nz_native
 # ring pair on its own plane — plane ordering and z were verified against
 # getCoordinates — and with MLEM (below) reconstructs points cleanly.
 options.span = 1
-options.ring_difference = SC.RINGS - 1
-options.Ndist = 200
-options.Nang = SC.DETS_PER_RING // 2
-options.TotSinos = SC.RINGS ** 2
+options.ring_difference = R - 1
+options.Ndist = max(64, D // 2)
+options.Nang = D // 2
+options.TotSinos = R ** 2
 options.NSinos = options.TotSinos
 
 t0 = time.time()
@@ -107,24 +120,24 @@ sorted_ang = cang[order]
 def snap_transaxial(p):
     a = np.arctan2(p[:, 1], p[:, 0])
     i = np.searchsorted(sorted_ang, a)
-    lo = np.clip(i - 1, 0, SC.DETS_PER_RING - 1)
-    hi = i % SC.DETS_PER_RING
+    lo = np.clip(i - 1, 0, D - 1)
+    hi = i % D
     d_lo = np.abs(np.mod(a - sorted_ang[lo] + np.pi, 2 * np.pi) - np.pi)
     d_hi = np.abs(np.mod(a - sorted_ang[hi] + np.pi, 2 * np.pi) - np.pi)
     return order[np.where(d_lo < d_hi, lo, hi)].astype(np.uint16)
 
 
 def snap_ring(p):
-    return np.clip(np.round((p[:, 2] + SC.AXIAL_MM / 2 - SC.PITCH_Z_MM / 2)
-                            / SC.PITCH_Z_MM), 0, SC.RINGS - 1).astype(np.uint16)
+    return np.clip(np.round((p[:, 2] + SC.AXIAL_MM / 2 - PITCH_Z / 2)
+                            / PITCH_Z), 0, R - 1).astype(np.uint16)
 
 
 d1, d2 = snap_transaxial(lors[:, :3]), snap_transaxial(lors[:, 3:])
 r1, r2 = snap_ring(lors[:, :3]), snap_ring(lors[:, 3:])
 Sino = saveSinogram(d1, d2, r1, r2, options.Nang, options.Ndist,
                     options.ring_difference, span=1,
-                    rings=SC.RINGS, detPerRing=SC.DETS_PER_RING,
-                    cryst_per_block=SC.CRYSTALS_TRANS, nDistSide=1)
+                    rings=R, detPerRing=D,
+                    cryst_per_block=int(options.cryst_per_block), nDistSide=1)
 print(f"OMEGA-binned: sinogram formed, {int(Sino.sum())}/{len(lors)} counts "
       f"binned ({(Sino > 0).sum()} nonzero bins)", flush=True)
 
@@ -181,7 +194,8 @@ try:
 except Exception:
     sha = "?"
 manifest = {"engine": "omega-binned", "config": {k: str(v) for k, v in cfg.items()},
-            "sinogram": {"span": 1, "Ndist": 200, "Nang": options.Nang, "mlem": True,
+            "sinogram": {"span": 1, "Ndist": int(options.Ndist), "Nang": int(options.Nang),
+                         "mlem": True, "virtual_dets": D, "virtual_rings": R,
                          "ring_difference": int(options.ring_difference)},
             "core_seconds": round(core, 3),
             "lors_md5": hashlib.md5(open(cfg["lors_npy"], "rb").read()).hexdigest(),

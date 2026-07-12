@@ -295,6 +295,13 @@ with col:
     scatter_frac = canvas.slider("scatter_fraction", label="Manual scatter fraction",
                                  min=0.05, max=0.6, step=0.05, default=0.25)
 
+section(col, "Binned virtual scanner")
+with col:
+    bin_dets = canvas.toggle(["100", "200", "400", "800"], name="bin_dets",
+                             default="400", label="Transaxial crystals (binned leg)")
+    bin_rings = canvas.toggle(["10", "20", "40", "80"], name="bin_rings",
+                              default="40", label="Axial rings (binned leg)")
+
 section(col, "Timings & results")
 with col:
     timing_table = canvas.table([{"package": "—", "core (s)": "", "wall (s)": "",
@@ -326,6 +333,11 @@ with col:
   position error and a few % of events lost to sinogram acceptance. Scatter
   correction applies to the unbinned legs only (sinogram scatter would need
   per-bin injection)
+- **Binned virtual scanner**: the binned leg can quantize onto a coarser or
+  finer crystal grid than the physical scanner — the CAD model in its 3D
+  panel updates live, and the next Run bins onto that grid. The unbinned
+  legs are invariant by construction, so sweeping granularity measures the
+  binning cost as a function of hardware sampling
 - Run button turns into **■ Cancel** while a comparison is in flight
 """, name="notes", h="auto")
 
@@ -372,6 +384,16 @@ def _(v):
 @scatter_sel.on_change
 def _(v):
     show_panels(v == "openSSS", scatter_scale, scatter_frac)
+
+
+@bin_dets.on_change(dedicated=True, queue="latest")
+def _(v):
+    update_scanner_model()
+
+
+@bin_rings.on_change(dedicated=True, queue="latest")
+def _(v):
+    update_scanner_model()
 
 
 @plane_sel.on_change(dedicated=True, queue="latest")
@@ -584,7 +606,8 @@ def run_or_cancel():
         progress.update(stage="OMEGA binned: sinogram + turnkey OSEM", pct=0,
                         active=True, failed=False)
         bin_cfg = {"lors_npy": str(SUBSET_NPY), "out_npy": str(BIN_NPY), "grid": g,
-                   "iterations": int(iters.value), "subsets": int(subsets.value)}
+                   "iterations": int(iters.value), "subsets": int(subsets.value),
+                   "bin_dets": int(bin_dets.value), "bin_rings": int(bin_rings.value)}
         bin_pkl = TMP / "danvas_compare_bin.pkl"
         pickle.dump(bin_cfg, open(bin_pkl, "wb"))
         rc, wall, core, tail = run_child(
@@ -624,16 +647,24 @@ canvas.trace(deep=False, below=profile_plot if profile_plot else hm_pr,
              w=800, h=380)
 
 # ---- Initial state -------------------------------------------------------------
-# the binned panel hosts a CAD model of its equivalent scanner: the exact
-# crystal grid (400 x 40, real pitches and radii from scanner.py) that the
-# sinogram binning quantizes onto — toggle it in the panel's Items list
-try:
-    from scanner_mesh import crystal_grid_glb
-    viewer_bin.layer("scanner").update(
-        crystal_grid_glb(OUT / "scanner_crystals.glb"),
-        mesh_color=(115, 125, 145, 80))
-except Exception as _exc:
-    print(f"scanner CAD model skipped: {_exc}")
+# the binned panel hosts a CAD model of its (virtual) scanner: the crystal
+# grid the sinogram binning quantizes onto — adjustable via the "Binned
+# virtual scanner" toggles, regenerated and re-pushed on change
+def update_scanner_model():
+    try:
+        from scanner_mesh import crystal_grid_glb
+        d, r = int(bin_dets.value), int(bin_rings.value)
+        viewer_bin.layer("scanner").update(
+            crystal_grid_glb(OUT / f"scanner_{d}x{r}.glb", dets=d, rings=r),
+            mesh_color=(115, 125, 145, 80))
+        if not run_lock.locked():
+            status.update(f"binned virtual scanner: {d} crystals × {r} rings — "
+                          f"next Run bins onto this grid")
+    except Exception as _exc:
+        print(f"scanner CAD model skipped: {_exc}")
+
+
+update_scanner_model()
 
 update_lor_layers(len(data["lors"]))
 if (PR_OUT / "reconstruction_image.npy").exists() and OM_NPY.exists():
