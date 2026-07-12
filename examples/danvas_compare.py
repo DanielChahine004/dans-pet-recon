@@ -75,6 +75,12 @@ viewer_pr = canvas.model3d("petrecon_3d", label="petrecon", x=40, y=40, w=620, h
 viewer_om = canvas.model3d("omega_3d", label="OMEGA", right_of=viewer_pr, w=620, h=520)
 viewer_bin = canvas.model3d("binned_3d", label="OMEGA binned (conventional)",
                             right_of=viewer_om, w=620, h=520)
+bin_dets = canvas.slider("bin_dets", label="Binned: transaxial crystals",
+                         min=50, max=800, step=2, default=400,
+                         on_release=True, above=viewer_bin, w=300)
+bin_rings = canvas.slider("bin_rings", label="Binned: axial rings",
+                          min=5, max=80, default=40,
+                          on_release=True, right_of=bin_dets, w=300)
 
 hm_pr = canvas.heatmap("slice_petrecon", label="petrecon slice", below=viewer_pr, w=400, h=360)
 hm_om = canvas.heatmap("slice_omega", label="OMEGA slice", right_of=hm_pr, w=400, h=360)
@@ -294,13 +300,6 @@ with col:
                                   default="manual", label="Scatter scale")
     scatter_frac = canvas.slider("scatter_fraction", label="Manual scatter fraction",
                                  min=0.05, max=0.6, step=0.05, default=0.25)
-
-section(col, "Binned virtual scanner")
-with col:
-    bin_dets = canvas.toggle(["100", "200", "400", "800"], name="bin_dets",
-                             default="400", label="Transaxial crystals (binned leg)")
-    bin_rings = canvas.toggle(["10", "20", "40", "80"], name="bin_rings",
-                              default="40", label="Axial rings (binned leg)")
 
 section(col, "Timings & results")
 with col:
