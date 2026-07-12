@@ -166,12 +166,21 @@ implements the textbook OSEM update around OMEGA's operators.
 - **Subsets fold into MLEM**: at research count levels, ordered subsets on
   ultra-sparse sinograms produce a bright axis-column artifact; the runner
   runs iterations x subsets MLEM updates instead.
-- **Validity domain**: point-like sources solid (global peak on-source,
-  error ~1 crystal pitch / ±3 mm axial — the binning cost itself); binning
-  also drops ~5% (points) to ~32% (IEC, scatter-rich) of events at the
-  sinogram acceptance. Extended objects at ultra-low counts (IEC 200k) are
-  artifact-dominated — sparse-MLEM noise + suspected span-3 oblique-segment
-  z issue in the Python port. Open item.
+- **Span 3 is broken in this port; use span 1.** Definitive evidence: a
+  perfectly centered point source smears into a z-axis line through the
+  whole volume (oblique-segment z mishandling — direct planes dominate
+  off-center sources, which is why they validated), extended objects (IEC)
+  reconstruct with wrong z structure, and limited-ring-difference segment
+  tables crash sinogramCoordinates3D. Span 1 (every ring pair its own
+  plane; ordering verified against getCoordinates) + MLEM reconstructs
+  points AND the IEC correctly (peak matches unbinned within ~1 voxel).
+- **Validity domain (span 1 + MLEM)**: point-like sources ~1-2 crystal
+  pitches position error (the binning cost); extended objects (IEC 200k)
+  reconstruct with the correct structure. Binning drops ~5% (points) to
+  ~32% (IEC, scatter-rich) of events at the sinogram acceptance.
+- Reconstruct at the native Nz = 2*rings-1 = 79 slices and resample onto
+  the comparison grid — a finer recon z-grid starves alternate slices
+  (zebra artifact).
 - **Debugging lesson**: never use z-centroids to locate reconstructed
   structure in sinogram recons — boundary slabs drag centroids and faked a
   "z-compression" that cost hours. Use local peaks in interior crops.

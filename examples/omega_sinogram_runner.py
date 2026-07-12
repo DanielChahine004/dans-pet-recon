@@ -64,7 +64,7 @@ nz_native = 2 * SC.RINGS - 1     # canonical sinogram-recon slice count (79):
 # reconstructing on a finer z grid starves the slices between the 3.7 mm
 # sinogram planes (zebra artifact); reconstruct natively, resample after
 print(f"OMEGA-binned: {len(lors)} LORs, grid {grid}^3 (native Nz {nz_native}, "
-      f"resampled), span 3, MLEM", flush=True)
+      f"resampled), span 1, MLEM", flush=True)
 
 options = proj.projectorClass()
 options.blocks_per_ring = SC.SECTORS_TRANS
@@ -83,19 +83,17 @@ options.FOVa_y = FOV_MM
 options.axial_fov = SC.AXIAL_MM          # full scanner; image cropped after
 options.Nx = options.Ny = grid
 options.Nz = nz_native
-# ---- canonical sinogram definition (span 3, gate_PET.py style) ----
-options.span = 3
+# ---- sinogram definition: span 1 ----
+# Span-3 michelogram mashing mishandles oblique-segment z in this port
+# (a centered point source smears into a z-axis line; segment tables with
+# limited ring difference crash sinogramCoordinates3D). Span 1 keeps every
+# ring pair on its own plane — plane ordering and z were verified against
+# getCoordinates — and with MLEM (below) reconstructs points cleanly.
+options.span = 1
 options.ring_difference = SC.RINGS - 1
 options.Ndist = 200
 options.Nang = SC.DETS_PER_RING // 2
-st = np.concatenate((np.array(SC.RINGS * 2 - 1, ndmin=1),
-                     np.arange(SC.RINGS * 2 - 1 - (options.span + 1),
-                               max(SC.RINGS * 2 - 1 - options.ring_difference * 2,
-                                   SC.RINGS - options.ring_difference),
-                               -options.span * 2)))
-st = np.insert(np.repeat(st[1:], 2), 0, st[0])
-options.segment_table = st
-options.TotSinos = int(np.sum(st))
+options.TotSinos = SC.RINGS ** 2
 options.NSinos = options.TotSinos
 
 t0 = time.time()
@@ -124,7 +122,7 @@ def snap_ring(p):
 d1, d2 = snap_transaxial(lors[:, :3]), snap_transaxial(lors[:, 3:])
 r1, r2 = snap_ring(lors[:, :3]), snap_ring(lors[:, 3:])
 Sino = saveSinogram(d1, d2, r1, r2, options.Nang, options.Ndist,
-                    options.ring_difference, span=options.span,
+                    options.ring_difference, span=1,
                     rings=SC.RINGS, detPerRing=SC.DETS_PER_RING,
                     cryst_per_block=SC.CRYSTALS_TRANS, nDistSide=1)
 print(f"OMEGA-binned: sinogram formed, {int(Sino.sum())}/{len(lors)} counts "
@@ -183,7 +181,7 @@ try:
 except Exception:
     sha = "?"
 manifest = {"engine": "omega-binned", "config": {k: str(v) for k, v in cfg.items()},
-            "sinogram": {"span": 3, "Ndist": 200, "Nang": options.Nang, "mlem": True,
+            "sinogram": {"span": 1, "Ndist": 200, "Nang": options.Nang, "mlem": True,
                          "ring_difference": int(options.ring_difference)},
             "core_seconds": round(core, 3),
             "lors_md5": hashlib.md5(open(cfg["lors_npy"], "rb").read()).hexdigest(),

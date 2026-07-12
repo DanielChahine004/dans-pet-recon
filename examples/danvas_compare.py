@@ -99,9 +99,13 @@ def update_lor_layers(n):
 
 
 def display_vmax(vol):
-    """99.9th-percentile window: robust to a few hot voxels that would
-    otherwise render the volume black under max-normalization."""
-    v = float(np.percentile(vol, 99.9))
+    """Window at the lightly-smoothed maximum: isolated rogue voxels are
+    suppressed by smoothing (so they can't black out the display), while
+    genuine compact structures (a point source occupies only ~tens of
+    voxels — far below any percentile) keep their true scale. A raw
+    percentile window saturates the noise floor of sparse volumes."""
+    from scipy.ndimage import gaussian_filter
+    v = float(gaussian_filter(vol, 1.0).max())
     return v if v > 0 else (float(vol.max()) or 1.0)
 
 
