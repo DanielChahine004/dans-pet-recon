@@ -110,17 +110,12 @@ def update_lor_layers(n):
 
 
 def display_vmax(vol):
-    """Window at the raw max, unless it is anomalously far above the
-    lightly-smoothed max — the signature of isolated rogue voxels (which
-    would black out the display). Real compact structures survive smoothing
-    (ratio stays modest), so they keep the max window and the low-count
-    OSEM speckle stays visually subdued."""
-    from scipy.ndimage import gaussian_filter
-    m = float(vol.max())
-    s = float(gaussian_filter(vol, 1.0).max())
-    if m <= 0:
-        return 1.0
-    return m if (s > 0 and m < 15 * s) else max(s, m * 1e-3)
+    """Publication convention: raw linear window [0, max]. No heuristics, no
+    smoothing anywhere — what you see is the reconstruction as saved. (A
+    volume whose display is dominated by isolated hot voxels is showing you
+    a real property of that reconstruction; the runners' guards and the test
+    suite exist to catch genuinely broken runs.)"""
+    return float(vol.max()) or 1.0
 
 
 def show_volumes(voxel_mm):

@@ -185,6 +185,18 @@ implements the textbook OSEM update around OMEGA's operators.
   structure in sinogram recons — boundary slabs drag centroids and faked a
   "z-compression" that cost hours. Use local peaks in interior crops.
 
+## Display convention (settled 2026-07-12)
+
+Raw linear windowing, [0, max], everywhere (3D volumes and slice heatmaps).
+No smoothing or heuristics touch the data or the display — matching
+publication practice (state the window; declare any post-filter; use
+unfiltered reconstructions for resolution metrics). The visible speckle in
+low-count OSEM reconstructions is a real property of those reconstructions.
+Earlier auto-window heuristics (percentile, smoothed-max) are gone: a
+display dominated by isolated hot voxels is information, and genuinely
+broken runs are caught by the runner guards and the test suite, not hidden
+by the renderer. Manual W/L sliders on the 3D panels remain for inspection.
+
 ## Tail-fit scaling: field convention (researched 2026-07-12)
 
 - Standard practice (Watson SSS -> STIR -> vendors): tails are **auto-detected
