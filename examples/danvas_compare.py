@@ -86,6 +86,12 @@ hm_pr = canvas.heatmap("slice_petrecon", label="petrecon slice", below=viewer_pr
 hm_om = canvas.heatmap("slice_omega", label="OMEGA slice", right_of=hm_pr, w=400, h=360)
 hm_diff = canvas.heatmap("slice_diff", label="pr–om difference", right_of=hm_om, w=400, h=360)
 hm_bin = canvas.heatmap("slice_binned", label="OMEGA binned slice", right_of=hm_diff, w=400, h=360)
+hm_sino = canvas.heatmap("sinogram", label="binned sinogram (radial × angle)",
+                         right_of=hm_bin, w=400, h=360)
+sino_view = canvas.toggle(["planes sum", "direct plane"], name="sino_view",
+                          label="Sinogram view", below=hm_sino, w=300)
+sino_ring = canvas.slider("sino_ring", label="Direct plane: ring", min=0, max=39,
+                          default=20, right_of=sino_view, w=300)
 
 PLANES = {"xy": 2, "xz": 1, "yz": 0}
 plane_sel = canvas.toggle(list(PLANES), name="slice_plane", label="Slice plane", below=hm_pr)
@@ -115,6 +121,34 @@ if profile_plot is not None:
                             default=0, below=prof_py, w=300)
 
 vols = {"pr": None, "om": None, "bin": None, "voxel": 1.0}
+sino = {"summed": None, "direct": None, "radial_bin_mm": 1.0}
+
+
+def load_sinogram_view(npz_path):
+    try:
+        z = np.load(npz_path)
+        sino["summed"] = z["summed"]
+        sino["direct"] = z["direct"]
+        sino["radial_bin_mm"] = float(z["radial_bin_mm"])
+        sino_ring.max = int(z["rings"]) - 1
+        if int(sino_ring.value) > sino_ring.max:
+            sino_ring.update(int(z["rings"]) // 2)
+        update_sinogram()
+    except Exception as exc:
+        print(f"sinogram view load failed: {exc}")
+
+
+def update_sinogram():
+    if sino["summed"] is None:
+        return
+    if sino_view.value == "direct plane":
+        r = min(int(sino_ring.value), sino["direct"].shape[2] - 1)
+        s = sino["direct"][:, :, r].astype(np.float32)
+    else:
+        s = sino["summed"]
+    half_r = s.shape[0] / 2 * sino["radial_bin_mm"]
+    hm_sino.update(s, vmin=0.0, vmax=float(s.max()) or 1.0, cmap="gray",
+                   extent=(0.0, 180.0, half_r, -half_r))
 _filter_cache = {}
 _filter_lock = threading.Lock()
 
@@ -351,6 +385,7 @@ if profile_plot is not None:
     show_panels(False, prof_px, prof_py, prof_pz)      # only in "manual" mode
 show_panels(False, smooth_fwhm)                        # only when filter is on
 show_panels(False, scatter_scale, scatter_frac)        # only when scatter is on
+show_panels(False, sino_ring)                          # only in direct-plane view
 
 
 # ---- Wiring -------------------------------------------------------------------
@@ -383,6 +418,17 @@ def _(v):
 @scatter_sel.on_change
 def _(v):
     show_panels(v == "openSSS", scatter_scale, scatter_frac)
+
+
+@sino_view.on_change(dedicated=True)
+def _(v):
+    show_panels(v == "direct plane", sino_ring)
+    update_sinogram()
+
+
+@sino_ring.on_change(dedicated=True, queue="latest")
+def _(v):
+    update_sinogram()
 
 
 @bin_dets.on_change(dedicated=True, queue="latest")
@@ -616,6 +662,7 @@ def run_or_cancel():
         vols["bin"] = np.load(BIN_NPY).astype(np.float32)
         rows.append(result_row("OMEGA binned", wall, core, vols["bin"]))
         timing_table.update(rows)
+        load_sinogram_view(str(BIN_NPY.with_suffix("")) + "_sinogram.npz")
 
         # ---- present ----
         show_volumes(voxel)
@@ -671,6 +718,9 @@ if (PR_OUT / "reconstruction_image.npy").exists() and OM_NPY.exists():
     vols["om"] = np.load(OM_NPY).astype(np.float32)
     if BIN_NPY.exists():
         vols["bin"] = np.load(BIN_NPY).astype(np.float32)
+        _snpz = Path(str(BIN_NPY.with_suffix("")) + "_sinogram.npz")
+        if _snpz.exists():
+            load_sinogram_view(str(_snpz))
     vols["voxel"] = FOV_MM / vols["pr"].shape[0]
     show_volumes(vols["voxel"])
     update_profiles()

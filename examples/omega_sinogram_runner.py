@@ -144,6 +144,17 @@ Sino = saveSinogram(d1, d2, r1, r2, options.Nang, options.Ndist,
 print(f"OMEGA-binned: sinogram formed, {int(Sino.sum())}/{len(lors)} counts "
       f"binned ({(Sino > 0).sum()} nonzero bins)", flush=True)
 
+# save a viewable reduction for the dashboard's sinogram panel: the full 3D
+# stack is huge (GBs at fine grids); the classic radial x angular view needs
+# only the plane-summed sinogram and the direct (ring,ring) planes
+_s3 = Sino.reshape(options.Ndist, options.Nang, options.NSinos, order="F")
+np.savez_compressed(
+    str(Path(cfg["out_npy"]).with_suffix("")) + "_sinogram.npz",
+    summed=_s3.sum(axis=2).astype(np.float32),
+    direct=_s3[:, :, np.arange(R) * (R + 1)].astype(np.uint16),
+    ndist=options.Ndist, nang=options.Nang, rings=R, dets=D,
+    radial_bin_mm=float(options.cr_p) / 2.0)
+
 options.SinM = Sino.astype(np.float32)
 options.OSEM = True
 # At research count levels (10^5-ish events over ~44M sinogram bins) ordered
