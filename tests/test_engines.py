@@ -112,6 +112,22 @@ class TestGeometryTruth(unittest.TestCase):
         r = float(np.corrcoef(a, b)[0, 1])
         self.assertGreater(r, 0.90, f"cross-engine correlation {r:.3f} < 0.90")
 
+    def test_binned_peak_position(self):
+        r = _run("omega_sinogram_runner.py", {
+            "lors_npy": str(self.lors_npy), "out_npy": str(TMP / "bin.npy"),
+            "grid": GRID, "iterations": 2, "subsets": 2})
+        self.assertEqual(r.returncode, 0, f"binned runner failed:\n{r.stdout[-800:]}")
+        vol = np.load(TMP / "bin.npy")
+        peak = np.array(np.unravel_index(np.argmax(vol), vol.shape), dtype=float)
+        # compare against the unbinned reconstruction's peak: the difference
+        # IS the binning cost, expected ~1 crystal pitch (LOR-convergence
+        # "expected" is scatter-biased, so it's not the right reference here)
+        ref = np.array(np.unravel_index(np.argmax(self.pr), self.pr.shape), dtype=float)
+        err = np.abs(peak - ref)
+        self.assertTrue((err <= 2.5).all(),
+                        f"binned peak {peak} vs unbinned peak {ref} "
+                        f"(voxel error {err}; tolerance 2.5 = ~1 crystal pitch)")
+
     def test_manifests_written(self):
         m = json.loads((TMP / "pr" / "manifest.json").read_text())
         self.assertEqual(m["engine"], "petrecon")

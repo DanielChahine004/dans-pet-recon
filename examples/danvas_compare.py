@@ -46,6 +46,7 @@ OUT = HERE.parent / "example_output_compare"
 PR_OUT = OUT / "petrecon"
 PR_PRE = OUT / "petrecon_prepass"          # activity pre-pass (never displayed)
 OM_NPY = OUT / "omega_recon.npy"
+BIN_NPY = OUT / "omega_binned.npy"
 TMP = Path(tempfile.gettempdir())
 SUBSET_NPY = TMP / "danvas_compare_lors.npy"
 N_LINE_LORS = 400
@@ -67,10 +68,13 @@ load_dataset("point 0_0_0")
 canvas = danvas.Canvas()
 viewer_pr = canvas.model3d("petrecon_3d", label="petrecon", x=40, y=40, w=620, h=520)
 viewer_om = canvas.model3d("omega_3d", label="OMEGA", right_of=viewer_pr, w=620, h=520)
+viewer_bin = canvas.model3d("binned_3d", label="OMEGA binned (conventional)",
+                            right_of=viewer_om, w=620, h=520)
 
 hm_pr = canvas.heatmap("slice_petrecon", label="petrecon slice", below=viewer_pr, w=400, h=360)
 hm_om = canvas.heatmap("slice_omega", label="OMEGA slice", right_of=hm_pr, w=400, h=360)
-hm_diff = canvas.heatmap("slice_diff", label="normalized difference", right_of=hm_om, w=400, h=360)
+hm_diff = canvas.heatmap("slice_diff", label="pr–om difference", right_of=hm_om, w=400, h=360)
+hm_bin = canvas.heatmap("slice_binned", label="OMEGA binned slice", right_of=hm_diff, w=400, h=360)
 
 PLANES = {"xy": 2, "xz": 1, "yz": 0}
 plane_sel = canvas.toggle(list(PLANES), name="slice_plane", label="Slice plane", below=hm_pr)
@@ -82,7 +86,7 @@ slice_pos = canvas.label("slice_pos", "no volumes yet — Run a comparison",
 profile_plot = (canvas.plot(name="profiles", label="through-peak x profiles (normalized)",
                             below=plane_sel, w=800, h=340) if go else None)
 
-vols = {"pr": None, "om": None, "voxel": 1.0}
+vols = {"pr": None, "om": None, "bin": None, "voxel": 1.0}
 
 
 def update_lor_layers(n):
@@ -103,7 +107,7 @@ def display_vmax(vol):
 
 def show_volumes(voxel_mm):
     spacing = (voxel_mm * MM,) * 3
-    for key, viewer in (("pr", viewer_pr), ("om", viewer_om)):
+    for key, viewer in (("pr", viewer_pr), ("om", viewer_om), ("bin", viewer_bin)):
         vol = vols[key]
         if vol is None:
             continue
@@ -124,7 +128,7 @@ def update_slices():
     half_a, half_b = (ref.shape[i] * vox / 2 for i in (a, b))
     extent = (-half_a, half_a, half_b, -half_b)   # heatmap y labels top row first
     norm = {}
-    for key, hm in (("pr", hm_pr), ("om", hm_om)):
+    for key, hm in (("pr", hm_pr), ("om", hm_om), ("bin", hm_bin)):
         vol = vols[key]
         if vol is None:
             continue
@@ -132,7 +136,7 @@ def update_slices():
         vmax = display_vmax(vol)
         hm.update(sl, vmin=0.0, vmax=vmax, cmap="hot", extent=extent)
         norm[key] = np.clip(sl / vmax, 0, 1)
-    if len(norm) == 2:
+    if "pr" in norm and "om" in norm:
         d = norm["pr"] - norm["om"]
         lim = float(np.abs(d).max()) or 1.0
         hm_diff.update(d, vmin=-lim, vmax=lim, cmap="gray", extent=extent)
@@ -158,8 +162,11 @@ def update_profiles():
     peak = np.unravel_index(np.argmax(vols["pr"]), vols["pr"].shape)
     vox = vols["voxel"]
     fig = go.Figure()
-    for key, name in (("pr", "petrecon"), ("om", "OMEGA")):
+    for key, name in (("pr", "petrecon (unbinned)"), ("om", "OMEGA (unbinned)"),
+                      ("bin", "OMEGA binned")):
         vol = vols[key]
+        if vol is None:
+            continue
         prof = vol[:, peak[1], peak[2]] / (float(vol.max()) or 1.0)
         x_mm = (np.arange(vol.shape[0]) + 0.5 - vol.shape[0] / 2) * vox
         fig.add_trace(go.Scatter(x=x_mm, y=prof, name=name, mode="lines"))
@@ -251,6 +258,13 @@ with col:
   engines reconstruct with the same per-LOR additive scatter. Sensitivity is
   forced on (the correction needs count-scale normalization). Tail-fit scaling
   is experimental at low counts — manual fraction is the safe default
+- **OMEGA binned** is the conventional counterpart: events snapped to the
+  crystal grid, span-3 sinograms via OMEGA's own saveSinogram, reconstructed
+  with the fully-supported turnkey path (`reconstructions_main`). Binned vs
+  unbinned on identical events is the thesis's core comparison — expect ~±3 mm
+  position error and a few % of events lost to sinogram acceptance. Scatter
+  correction applies to the unbinned legs only (sinogram scatter would need
+  per-bin injection)
 - Run button turns into **■ Cancel** while a comparison is in flight
 """, name="notes", h="auto")
 
@@ -446,6 +460,23 @@ def run_or_cancel():
         rows.append(result_row("OMEGA", wall, core, vols["om"]))
         timing_table.update(rows)
 
+        # ---- OMEGA binned (conventional baseline; no scatter/sens args —
+        # sinogram-mode reconstruction handles its own normalization) ----
+        status.update(f"OMEGA binned: {n:,} LORs, grid {g}³ …")
+        progress.update(stage="OMEGA binned: sinogram + turnkey OSEM", pct=0,
+                        active=True, failed=False)
+        bin_cfg = {"lors_npy": str(SUBSET_NPY), "out_npy": str(BIN_NPY), "grid": g,
+                   "iterations": int(iters.value), "subsets": int(subsets.value)}
+        bin_pkl = TMP / "danvas_compare_bin.pkl"
+        pickle.dump(bin_cfg, open(bin_pkl, "wb"))
+        rc, wall, core, tail = run_child(
+            [sys.executable, "-u", str(HERE / "omega_sinogram_runner.py"),
+             str(bin_pkl)], "OMEGA binned")
+        check(rc, tail, "OMEGA binned")
+        vols["bin"] = np.load(BIN_NPY).astype(np.float32)
+        rows.append(result_row("OMEGA binned", wall, core, vols["bin"]))
+        timing_table.update(rows)
+
         # ---- present ----
         show_volumes(voxel)
         update_profiles()
@@ -472,6 +503,8 @@ update_lor_layers(len(data["lors"]))
 if (PR_OUT / "reconstruction_image.npy").exists() and OM_NPY.exists():
     vols["pr"] = np.load(PR_OUT / "reconstruction_image.npy").astype(np.float32)
     vols["om"] = np.load(OM_NPY).astype(np.float32)
+    if BIN_NPY.exists():
+        vols["bin"] = np.load(BIN_NPY).astype(np.float32)
     vols["voxel"] = FOV_MM / vols["pr"].shape[0]
     show_volumes(vols["voxel"])
     update_profiles()
