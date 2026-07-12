@@ -82,6 +82,12 @@ slice_idx = canvas.slider("slice_idx", label="Slice index", min=0, max=255, defa
                           right_of=plane_sel, w=400)
 slice_pos = canvas.label("slice_pos", "no volumes yet — Run a comparison",
                          right_of=slice_idx, w=380, h="auto")
+smooth_sel = canvas.toggle(["off", "on"], name="display_filter", default="off",
+                           label="Display post-filter (Gaussian)",
+                           right_of=slice_pos, w=280)
+smooth_fwhm = canvas.slider("filter_fwhm", label="Post-filter FWHM (mm)",
+                            min=1.0, max=12.0, step=0.5, default=4.0,
+                            right_of=smooth_sel, w=300)
 
 profile_plot = (canvas.plot(name="profiles", label="line profiles (normalized)",
                             below=plane_sel, w=800, h=340) if go else None)
@@ -98,6 +104,24 @@ if profile_plot is not None:
                             default=0, below=prof_py, w=300)
 
 vols = {"pr": None, "om": None, "bin": None, "voxel": 1.0}
+_filter_cache = {}
+
+
+def display_vol(key):
+    """Volume for the slice displays: raw, or (explicitly enabled) with a
+    Gaussian post-filter of the selected FWHM — the standard, declared
+    post-smoothing of publications. Saved outputs are never touched."""
+    vol = vols[key]
+    if vol is None or smooth_sel.value == "off":
+        return vol
+    fwhm = float(smooth_fwhm.value)
+    ck = (key, fwhm, id(vol))
+    if ck not in _filter_cache:
+        from scipy.ndimage import gaussian_filter
+        sigma = fwhm / 2.355 / vols["voxel"]
+        _filter_cache.clear() if len(_filter_cache) > 6 else None
+        _filter_cache[ck] = gaussian_filter(vol, sigma)
+    return _filter_cache[ck]
 
 
 def update_lor_layers(n):
@@ -119,6 +143,7 @@ def display_vmax(vol):
 
 
 def show_volumes(voxel_mm):
+    _filter_cache.clear()
     spacing = (voxel_mm * MM,) * 3
     for key, viewer in (("pr", viewer_pr), ("om", viewer_om), ("bin", viewer_bin)):
         vol = vols[key]
@@ -142,7 +167,7 @@ def update_slices():
     extent = (-half_a, half_a, half_b, -half_b)   # heatmap y labels top row first
     norm = {}
     for key, hm in (("pr", hm_pr), ("om", hm_om), ("bin", hm_bin)):
-        vol = vols[key]
+        vol = display_vol(key)
         if vol is None:
             continue
         sl = np.take(vol, k, axis=axis).T[::-1]
@@ -330,6 +355,17 @@ def _(v):
 @slice_idx.on_change(dedicated=True, queue="latest")
 def _(v):
     update_slices()
+
+
+@smooth_sel.on_change(dedicated=True)
+def _(v):
+    update_slices()
+
+
+@smooth_fwhm.on_change(dedicated=True, queue="latest")
+def _(v):
+    if smooth_sel.value == "on":
+        update_slices()
 
 
 if profile_plot is not None:
