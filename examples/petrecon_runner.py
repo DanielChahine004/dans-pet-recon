@@ -60,6 +60,21 @@ else:
 np.save(os.path.join(out, "sensitivity_image.npy"), sens)
 
 bp = backproject_gpu(lors=lors, grid_size=grid, voxel_size=voxel, batch_size=1_000_000)
+
+if scatter is not None:
+    # Count-scale normalization: the geometric sensitivity is H^T 1 over ALL
+    # scanner LORs (~128M), so at the MLEM fixed point fp << 1 count/event —
+    # smaller than the scatter term, making fp + s = m infeasible and
+    # collapsing the image to ~0. Rescale sensitivity to the measured-event
+    # backprojection's magnitude so the equilibrium fp is ~1 count/event and
+    # the additive scatter (in counts) is commensurate. Scale is arbitrary in
+    # MLEM without scatter, so this only matters (and only runs) with scatter.
+    m = sens > sens.max() * 1e-3
+    k = float(np.median(bp[m] / sens[m]))
+    sens = sens * k
+    print(f"petrecon: sensitivity count-scale normalization x{k:.3g} "
+          f"(scatter correction active)", flush=True)
+
 init = bp.copy()
 mask = sens > 0
 init[mask] /= sens[mask]

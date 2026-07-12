@@ -59,6 +59,14 @@ implements the textbook OSEM update around OMEGA's operators.
   sensitivity; with `sens = ones` the fp magnitude is arbitrary and the
   scatter term is silently negligible. The dashboard forces sensitivity on
   whenever scatter is on.
+- **Scatter + full-scanner sensitivity needs count-scale normalization.**
+  Geometric sensitivity is H^T 1 over ~128M scanner LORs while only ~10^5
+  events are measured, so the MLEM equilibrium fp is << 1 count/event —
+  *smaller than the scatter term*, making fp + s = m infeasible and
+  collapsing the image to ~1e-20 ("black image"). petrecon_runner rescales
+  the sensitivity to the measured-event backprojection's magnitude (median
+  ratio over the support) whenever scatter is active; omega_runner's
+  fixed-point probe achieves the same implicitly.
 - Initialization scale cancels after one MLEM update (don't bother tuning it
   without scatter); with scatter, petrecon's bp/sens init is fine.
 

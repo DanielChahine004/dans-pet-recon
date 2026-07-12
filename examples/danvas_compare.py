@@ -44,6 +44,7 @@ MU_MAP = "/home/h/pet-recon/water_attenuation_map.npy"
 HERE = Path(__file__).resolve().parent
 OUT = HERE.parent / "example_output_compare"
 PR_OUT = OUT / "petrecon"
+PR_PRE = OUT / "petrecon_prepass"          # activity pre-pass (never displayed)
 OM_NPY = OUT / "omega_recon.npy"
 TMP = Path(tempfile.gettempdir())
 SUBSET_NPY = TMP / "danvas_compare_lors.npy"
@@ -93,6 +94,13 @@ def update_lor_layers(n):
         v.layer("lors").lines(lines, color=(120, 160, 220, 50))
 
 
+def display_vmax(vol):
+    """99.9th-percentile window: robust to a few hot voxels that would
+    otherwise render the volume black under max-normalization."""
+    v = float(np.percentile(vol, 99.9))
+    return v if v > 0 else (float(vol.max()) or 1.0)
+
+
 def show_volumes(voxel_mm):
     spacing = (voxel_mm * MM,) * 3
     for key, viewer in (("pr", viewer_pr), ("om", viewer_om)):
@@ -100,7 +108,8 @@ def show_volumes(voxel_mm):
         if vol is None:
             continue
         origin = tuple(-n * voxel_mm * MM / 2 for n in vol.shape)
-        viewer.layer("recon").volume(vol, spacing=spacing, origin=origin, cmap="hot")
+        viewer.layer("recon").volume(vol, spacing=spacing, origin=origin,
+                                     vmin=0.0, vmax=display_vmax(vol), cmap="hot")
     sync_slice_controls()
 
 
@@ -120,8 +129,9 @@ def update_slices():
         if vol is None:
             continue
         sl = np.take(vol, k, axis=axis).T[::-1]
-        hm.update(sl, vmin=0.0, vmax=float(vol.max()) or 1.0, cmap="hot", extent=extent)
-        norm[key] = sl / (float(vol.max()) or 1.0)
+        vmax = display_vmax(vol)
+        hm.update(sl, vmin=0.0, vmax=vmax, cmap="hot", extent=extent)
+        norm[key] = np.clip(sl / vmax, 0, 1)
     if len(norm) == 2:
         d = norm["pr"] - norm["om"]
         lim = float(np.abs(d).max()) or 1.0
@@ -362,8 +372,8 @@ def run_or_cancel():
         sens_path = ""
         status.color = (255, 180, 0)
 
-        def pr_run(tag, n_iter):
-            cfg = {"lors_npy": str(SUBSET_NPY), "out_dir": str(PR_OUT), "grid": g,
+        def pr_run(tag, n_iter, out_dir=None):
+            cfg = {"lors_npy": str(SUBSET_NPY), "out_dir": str(out_dir or PR_OUT), "grid": g,
                    "voxel": voxel, "iterations": n_iter, "subsets": int(subsets.value),
                    "sensitivity": sens_on, "scatter_npy": scatter_npy,
                    "sens_npy": sens_path}
@@ -384,9 +394,9 @@ def run_or_cancel():
             status.update(f"activity pre-pass for openSSS ({n:,} LORs, grid {g}³) …")
             progress.update(stage="petrecon: activity pre-pass", pct=0,
                             active=True, failed=False)
-            rc, wall, core, tail = pr_run("pre-pass", 2)
+            rc, wall, core, tail = pr_run("pre-pass", 2, out_dir=PR_PRE)
             check(rc, tail, "activity pre-pass")
-            sens_path = str(PR_OUT / "sensitivity_image.npy")
+            sens_path = str(PR_PRE / "sensitivity_image.npy")
             rows.append({"package": "pre-pass (2 it.)", "core (s)": f"{core:.1f}" if core else "?",
                          "wall (s)": f"{wall:.1f}", "peak": "—", "peak voxel": "—"})
             timing_table.update(rows)
@@ -395,7 +405,7 @@ def run_or_cancel():
             progress.update(stage="openSSS: single scatter simulation", pct=0,
                             active=True, failed=False)
             scatter_npy = str(TMP / "danvas_compare_scatter.npy")
-            sss_cfg = {"activity_npy": str(PR_OUT / "reconstruction_image.npy"),
+            sss_cfg = {"activity_npy": str(PR_PRE / "reconstruction_image.npy"),
                        "mumap_npy": MU_MAP, "lors_npy": str(SUBSET_NPY),
                        "out_npy": scatter_npy,
                        "scale": "tailfit" if scatter_scale.value == "tail fit" else "manual",

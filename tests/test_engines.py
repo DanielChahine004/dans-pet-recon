@@ -233,6 +233,11 @@ class TestScatterDirection(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stdout[-500:])
             vols[tag] = np.load(TMP / f"iec_{tag}" / "reconstruction_image.npy")
         a, b = vols["off"], vols["on"]
+        # regression: with full-scanner sensitivity + additive scatter, the
+        # count-scale normalization must prevent iterate collapse (~1e-20)
+        self.assertGreater(float(b.max()), 1e-6,
+                           "scatter-corrected image collapsed — count-scale "
+                           "normalization of the sensitivity is broken")
         hot = a > a.max() * 0.5
         bg = (a > a.max() * 0.02) & (a < a.max() * 0.15)
         hot_change = b[hot].sum() / a[hot].sum()
