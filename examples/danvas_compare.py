@@ -205,7 +205,10 @@ function Component({ props }) {
 }
 """
 
-col = canvas.column(x=1330, y=40, w=380, gap=14)
+# controls go to the right of the three 620-px viewers (was a fixed x=1330,
+# which sat underneath the third viewer)
+CTRL_X = 40 + 3 * (620 + 16) + 24
+col = canvas.column(x=CTRL_X, y=40, w=380, gap=14)
 section(col, "Data & run")
 with col:
     dataset_sel = canvas.toggle(list(DATASETS), name="dataset", label="LOR dataset")

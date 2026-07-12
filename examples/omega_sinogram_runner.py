@@ -60,9 +60,11 @@ cfg = pickle.load(open(sys.argv[1], "rb"))
 lors = np.load(cfg["lors_npy"]).astype(np.float32)
 grid = int(cfg["grid"])
 voxel = FOV_MM / grid
-nz_full = int(round(SC.AXIAL_MM / voxel))
-print(f"OMEGA-binned: {len(lors)} LORs, grid {grid}^3 (recon Nz {nz_full}, "
-      f"cropped), span 3, MLEM", flush=True)
+nz_native = 2 * SC.RINGS - 1     # canonical sinogram-recon slice count (79):
+# reconstructing on a finer z grid starves the slices between the 3.7 mm
+# sinogram planes (zebra artifact); reconstruct natively, resample after
+print(f"OMEGA-binned: {len(lors)} LORs, grid {grid}^3 (native Nz {nz_native}, "
+      f"resampled), span 3, MLEM", flush=True)
 
 options = proj.projectorClass()
 options.blocks_per_ring = SC.SECTORS_TRANS
@@ -80,7 +82,7 @@ options.FOVa_x = FOV_MM
 options.FOVa_y = FOV_MM
 options.axial_fov = SC.AXIAL_MM          # full scanner; image cropped after
 options.Nx = options.Ny = grid
-options.Nz = nz_full
+options.Nz = nz_native
 # ---- canonical sinogram definition (span 3, gate_PET.py style) ----
 options.span = 3
 options.ring_difference = SC.RINGS - 1
@@ -147,10 +149,14 @@ core = time.time() - t0
 img = np.squeeze(np.asarray(pz))
 if img.ndim == 4:
     img = img[..., -1]
-# crop the axial extent to the central FOV_MM cube (also removes the
-# low-sensitivity boundary slabs)
-z0 = (img.shape[2] - grid) // 2
-img = np.ascontiguousarray(img[:, :, z0:z0 + grid])
+# resample the native 79-slice axial grid (3.746 mm over 296 mm) onto the
+# comparison cube's z grid (linear interpolation); the cube covers only the
+# central 256 mm, which also excludes the low-sensitivity boundary slabs
+dz_src = SC.AXIAL_MM / img.shape[2]
+zc = (((np.arange(grid) + 0.5) * voxel - FOV_MM / 2) + SC.AXIAL_MM / 2) / dz_src - 0.5
+k0 = np.clip(np.floor(zc).astype(int), 0, img.shape[2] - 2)
+w = np.clip(zc - k0, 0.0, 1.0).astype(np.float32)
+img = np.ascontiguousarray(img[:, :, k0] * (1 - w) + img[:, :, k0 + 1] * w)
 
 np.save(cfg["out_npy"], img)
 print(f"OMEGA-binned: max {img.max():.4g} at "
