@@ -17,10 +17,10 @@ import matplotlib.pyplot as plt
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
-BASE_DIR = Path(os.path.expanduser("~/Opengate/ragy_files/Point_Sources_Processed"))
-# BINNED_DIR = Path(os.path.expanduser("~/Opengate/ragy_files/Point_Sources_Binned_new(ufb)"))
-BINNED_DIR = Path(os.path.expanduser("~/Opengate/ragy_files/Point_Sources_Binned_new(osem)"))
-OUTPUT_DIR = Path(os.path.expanduser("~/Opengate/ragy_files/binned_comparison_new(osem)"))
+BASE_DIR = Path(os.path.expanduser("~/Code/Opengate/ragy_files/Point_Sources_Processed"))
+# BINNED_DIR = Path(os.path.expanduser("~/Code/Opengate/ragy_files/Point_Sources_Binned_new(ufb)"))
+BINNED_DIR = Path(os.path.expanduser("~/Code/Opengate/ragy_files/Point_Sources_Binned_new(osem)"))
+OUTPUT_DIR = Path(os.path.expanduser("~/Code/Opengate/ragy_files/binned_comparison_new(osem)"))
 SKIP_DIRS = {"outside_fov", "pdf_outputs"}
 BLUR_SIGMA = 1
 BLUR_RADIUS = 1

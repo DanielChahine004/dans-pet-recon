@@ -74,8 +74,8 @@ def get_background_centres(phantom_centre=(128, 128, 128), bg_radius=75.0, angle
 # CONFIGURATION
 # ==============================================================================
 OUTPUT_DIRS = [
-    "/home/h/Opengate/ragy_files/IEC/gt",
-    "/home/h/Opengate/ragy_files/IEC/pred",
+    "/home/h/Code/Opengate/ragy_files/IEC/gt",
+    "/home/h/Code/Opengate/ragy_files/IEC/pred",
 ]
 LABELS = None  # Set to a list of strings to label each run, or None to use folder names
 
@@ -98,7 +98,7 @@ TRUE_HOT_RATIO = 4.0  # hot sphere : background activity concentration ratio (fr
 ANALYSIS_IMAGE = "backprojection"
 
 # Set to a path to save figures as PDFs (e.g. for Overleaf), or None to skip saving
-FIGURES_DIR = "/home/h/Opengate/ragy_files/IEC/figures"
+FIGURES_DIR = "/home/h/Code/Opengate/ragy_files/IEC/figures"
 
 # Which slice to show: "hottest" picks the slice with the max voxel per image,
 # "center" picks the center slice, or an int for a fixed slice index.

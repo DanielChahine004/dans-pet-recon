@@ -26,7 +26,7 @@ from petrecon import ReconConfig
 from petrecon.helpers.data_io import load_lors
 
 # ---- Inputs ------------------------------------------------------------------
-LOR_CSV = ("/home/h/Opengate/ragy_files/Point_Sources_Processed/"
+LOR_CSV = ("/home/h/Code/Opengate/ragy_files/Point_Sources_Processed/"
            "0_0_0/gt_processed_0_0_0.csv")
 OUT_DIR = Path(__file__).resolve().parent.parent / "example_output"
 SUBSET_NPY = Path(tempfile.gettempdir()) / "danvas_lor_subset.npy"  # OUT_DIR is wiped per run

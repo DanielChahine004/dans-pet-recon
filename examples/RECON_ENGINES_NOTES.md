@@ -70,7 +70,7 @@ implements the textbook OSEM update around OMEGA's operators.
 - Initialization scale cancels after one MLEM update (don't bother tuning it
   without scatter); with scatter, petrecon's bp/sens init is fine.
 
-## openSSS (r-santo/openSSS, cloned at /home/h/openSSS)
+## openSSS (r-santo/openSSS, cloned at /home/h/Code/openSSS)
 
 - Python-first, published (José Santo et al., EJNMMI Physics 2025). Extra dep: `joblib`.
 - **Units are cm** internally (geometry, ImageSize, attenuation 1/cm). Our

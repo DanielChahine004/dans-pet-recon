@@ -14,4 +14,4 @@ trimesh==4.12.2
 # after installing in a new env run:
 #   python -c "from omegatomo.util.compile import compileOMEGA; compileOMEGA()"
 # Machine prerequisites (ArrayFire, CUDA headers): examples/setup_omega_wsl.sh
-# openSSS: git clone https://github.com/r-santo/openSSS /home/h/openSSS
+# openSSS: git clone https://github.com/r-santo/openSSS /home/h/Code/openSSS

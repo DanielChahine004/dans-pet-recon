@@ -13,8 +13,8 @@ import os
 import numpy as np
 from pathlib import Path
 
-BASE_DIR = Path(os.path.expanduser("~/Opengate/ragy_files/Point_Sources_Processed"))
-BINNED_DIR = Path(os.path.expanduser("~/Opengate/ragy_files/Point_Sources_Binned_new(osem)"))
+BASE_DIR = Path(os.path.expanduser("~/Code/Opengate/ragy_files/Point_Sources_Processed"))
+BINNED_DIR = Path(os.path.expanduser("~/Code/Opengate/ragy_files/Point_Sources_Binned_new(osem)"))
 
 SKIP_DIRS = {"outside_fov", "pdf_outputs"}
 

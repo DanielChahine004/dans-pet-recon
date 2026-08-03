@@ -35,12 +35,12 @@ except ImportError:
 
 # ---- Inputs ------------------------------------------------------------------
 DATASETS = {
-    "point 0_0_0": ("/home/h/Opengate/ragy_files/Point_Sources_Processed/"
+    "point 0_0_0": ("/home/h/Code/Opengate/ragy_files/Point_Sources_Processed/"
                     "0_0_0/gt_processed_0_0_0.csv"),
-    "IEC gt": "/home/h/Opengate/ragy_files/IEC/iec_groundtruth_filtered.csv",
-    "IEC pred": "/home/h/Opengate/ragy_files/IEC/iec_prediction_filtered.csv",
+    "IEC gt": "/home/h/Code/Opengate/ragy_files/IEC/iec_groundtruth_filtered.csv",
+    "IEC pred": "/home/h/Code/Opengate/ragy_files/IEC/iec_prediction_filtered.csv",
 }
-MU_MAP = "/home/h/pet-recon/water_attenuation_map.npy"
+MU_MAP = "/home/h/Code/pet-recon/water_attenuation_map.npy"
 HERE = Path(__file__).resolve().parent
 OUT = HERE.parent / "example_output_compare"
 PR_OUT = OUT / "petrecon"

@@ -16,12 +16,12 @@ import matplotlib.pyplot as plt
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
-BASE_DIR = Path(os.path.expanduser("~/Opengate/ragy_files/Point_Sources_Processed"))
-OUTPUT_DIR = Path(os.path.expanduser("~/Opengate/ragy_files/Point_Sources_Processed/ubp_pdf_outputs"))
-# BASE_DIR = Path(os.path.expanduser("~/Opengate/ragy_files/Point_Sources_r235_to_257mm"))
-# OUTPUT_DIR = Path(os.path.expanduser("~/Opengate/ragy_files/Point_Sources_r235_to_257mm/pdf_outputs"))
-# BASE_DIR = Path(os.path.expanduser("~/Opengate/ragy_files/Point_Sources_polar_max50deg"))
-# OUTPUT_DIR = Path(os.path.expanduser("~/Opengate/ragy_files/Point_Sources_polar_max50deg/pdf_outputs"))
+BASE_DIR = Path(os.path.expanduser("~/Code/Opengate/ragy_files/Point_Sources_Processed"))
+OUTPUT_DIR = Path(os.path.expanduser("~/Code/Opengate/ragy_files/Point_Sources_Processed/ubp_pdf_outputs"))
+# BASE_DIR = Path(os.path.expanduser("~/Code/Opengate/ragy_files/Point_Sources_r235_to_257mm"))
+# OUTPUT_DIR = Path(os.path.expanduser("~/Code/Opengate/ragy_files/Point_Sources_r235_to_257mm/pdf_outputs"))
+# BASE_DIR = Path(os.path.expanduser("~/Code/Opengate/ragy_files/Point_Sources_polar_max50deg"))
+# OUTPUT_DIR = Path(os.path.expanduser("~/Code/Opengate/ragy_files/Point_Sources_polar_max50deg/pdf_outputs"))
 BLUR_SIGMA = 1
 BLUR_RADIUS = 1
 USE_BACKPROJECTION = True  # True → load backprojection_image.npy, False → reconstruction_image.npy

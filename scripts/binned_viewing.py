@@ -17,7 +17,7 @@ from petrecon.helpers.plotting import plot_line_profile_with_gaussian_fit
 # ==============================================================================
 # CONFIGURATION — change these to view different point sources
 # ==============================================================================
-BASE_DIR = Path(os.path.expanduser("~/Opengate/ragy_files/Point_Sources_Processed"))
+BASE_DIR = Path(os.path.expanduser("~/Code/Opengate/ragy_files/Point_Sources_Processed"))
 POSITION = "0_0_32"      # point source folder name
 BLUR_SIGMA = 1              # set to 0 to view raw (no blur)
 BLUR_RADIUS = 1

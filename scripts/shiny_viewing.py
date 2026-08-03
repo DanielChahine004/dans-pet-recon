@@ -46,9 +46,9 @@ def server(input, output, session):
         source_pos = (xy, xy, z)
 
         if input.filter_type() == "none":
-            path = "/home/h/Opengate/ragy_files/Point_Sources_Processed"
+            path = "/home/h/Code/Opengate/ragy_files/Point_Sources_Processed"
         else:
-            path = "/home/h/Opengate/ragy_files/Point_Sources_r235_to_257mm"
+            path = "/home/h/Code/Opengate/ragy_files/Point_Sources_r235_to_257mm"
 
         base = f"{path}/{source_pos[0]}_{source_pos[1]}_{source_pos[2]}"
 

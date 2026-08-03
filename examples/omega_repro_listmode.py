@@ -16,7 +16,7 @@ from omegatomo.projector import proj
 from omegatomo.reconstruction import reconstructions_main
 
 CASE = int(sys.argv[1]) if len(sys.argv) > 1 else 1
-lors = np.loadtxt("/home/h/Opengate/ragy_files/Point_Sources_Processed/96_96_96/"
+lors = np.loadtxt("/home/h/Code/Opengate/ragy_files/Point_Sources_Processed/96_96_96/"
                   "gt_processed_96_96_96.csv", delimiter=",", skiprows=1,
                   dtype=np.float32)[:5000]
 

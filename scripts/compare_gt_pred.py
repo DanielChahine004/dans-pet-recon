@@ -25,7 +25,7 @@ COORDS = [
           ]
 # COORDS = "0_0_120"
 
-BASE_DIR = "/home/h/Opengate/ragy_files/Point_Sources_Processed"
+BASE_DIR = "/home/h/Code/Opengate/ragy_files/Point_Sources_Processed"
 
 # Normalise to list
 COORD_LIST = [COORDS] if isinstance(COORDS, str) else list(COORDS)

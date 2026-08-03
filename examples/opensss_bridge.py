@@ -22,7 +22,7 @@ manual global scatter fraction. openSSS's own tail-fitting
 (`ScaleScattersToPrompts`) assumes binned prompts — a proper unbinned tail
 fit is future work.
 
-Requires: /home/h/openSSS clone, joblib (pip). Iterate: re-estimate from the
+Requires: /home/h/Code/openSSS clone, joblib (pip). Iterate: re-estimate from the
 current reconstruction every couple of OSEM iterations, like petrecon's SSS.
 """
 import sys
@@ -30,7 +30,7 @@ from pathlib import Path
 
 import numpy as np
 
-OPENSSS_PATH = "/home/h/openSSS/Python"
+OPENSSS_PATH = "/home/h/Code/openSSS/Python"
 sys.path.insert(0, OPENSSS_PATH)
 
 from openSSS.Sinogram import SinogramCoordinates
@@ -198,11 +198,11 @@ def tail_fit_scale(scatter_full, lors_mm, activity, fov_mm=256.0,
 
 
 if __name__ == "__main__":
-    activity = np.load("/home/h/Opengate/ragy_files/IEC/gt/reconstruction_image.npy")
-    mumap = np.load("/home/h/pet-recon/water_attenuation_map.npy")
+    activity = np.load("/home/h/Code/Opengate/ragy_files/IEC/gt/reconstruction_image.npy")
+    mumap = np.load("/home/h/Code/pet-recon/water_attenuation_map.npy")
     full = estimate_scatter(activity, mumap)
     print("scatter table:", full.shape, "| nonzero:", f"{(full > 0).mean():.1%}")
-    lors = np.loadtxt("/home/h/Opengate/ragy_files/IEC/iec_groundtruth_filtered.csv",
+    lors = np.loadtxt("/home/h/Code/Opengate/ragy_files/IEC/iec_groundtruth_filtered.csv",
                       delimiter=",", dtype=np.float32)
     s = scale_to_fraction(map_to_lors(full, lors))
     print("per-LOR scatter:", s.shape, f"| mean {s.mean():.3f} counts/event")

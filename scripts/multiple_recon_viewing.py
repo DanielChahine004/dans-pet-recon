@@ -13,8 +13,8 @@ from petrecon.helpers.data_io import load_lors
 # CONFIGURATION
 # ==============================================================================
 OUTPUT_DIRS = [
-    "/home/h/Opengate/ragy_files/IEC/gt",
-    "/home/h/Opengate/ragy_files/IEC/pred",
+    "/home/h/Code/Opengate/ragy_files/IEC/gt",
+    "/home/h/Code/Opengate/ragy_files/IEC/pred",
 ]
 LABELS = None  # Set to a list of strings to label each run, or None to use folder names
 

@@ -17,11 +17,11 @@ import matplotlib.pyplot as plt
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
-UNFILTERED_DIR = Path(os.path.expanduser("~/Opengate/ragy_files/Point_Sources_Processed"))
-FILTERED_DIR = Path(os.path.expanduser("~/Opengate/ragy_files/Point_Sources_r235_to_257mm"))
-OUTPUT_DIR = Path(os.path.expanduser("~/Opengate/ragy_files/filtered_comparison_r235_to_257mm"))
-# FILTERED_DIR = Path(os.path.expanduser("~/Opengate/ragy_files/Point_Sources_polar_max50deg"))
-# OUTPUT_DIR = Path(os.path.expanduser("~/Opengate/ragy_files/filtered_comparison_polar_max50deg"))
+UNFILTERED_DIR = Path(os.path.expanduser("~/Code/Opengate/ragy_files/Point_Sources_Processed"))
+FILTERED_DIR = Path(os.path.expanduser("~/Code/Opengate/ragy_files/Point_Sources_r235_to_257mm"))
+OUTPUT_DIR = Path(os.path.expanduser("~/Code/Opengate/ragy_files/filtered_comparison_r235_to_257mm"))
+# FILTERED_DIR = Path(os.path.expanduser("~/Code/Opengate/ragy_files/Point_Sources_polar_max50deg"))
+# OUTPUT_DIR = Path(os.path.expanduser("~/Code/Opengate/ragy_files/filtered_comparison_polar_max50deg"))
 
 BLUR_SIGMA = 1
 BLUR_RADIUS = 1

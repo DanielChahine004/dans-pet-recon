@@ -29,7 +29,7 @@ REPO = Path(__file__).resolve().parent.parent
 EXAMPLES = REPO / "examples"
 sys.path.insert(0, str(EXAMPLES))
 
-POINT_CSV = Path("/home/h/Opengate/ragy_files/Point_Sources_Processed/"
+POINT_CSV = Path("/home/h/Code/Opengate/ragy_files/Point_Sources_Processed/"
                  "96_96_96/gt_processed_96_96_96.csv")
 HAVE_DATA = POINT_CSV.exists()
 try:
@@ -222,8 +222,8 @@ class TestScatterDirection(unittest.TestCase):
     """Scatter correction suppresses background more than hot regions (IEC)."""
 
     def test_direction(self):
-        iec = Path("/home/h/Opengate/ragy_files/IEC/iec_groundtruth_filtered.csv")
-        sens256 = Path("/home/h/Opengate/ragy_files/IEC/gt/sensitivity_image.npy")
+        iec = Path("/home/h/Code/Opengate/ragy_files/IEC/iec_groundtruth_filtered.csv")
+        sens256 = Path("/home/h/Code/Opengate/ragy_files/IEC/gt/sensitivity_image.npy")
         if not (iec.exists() and sens256.exists() and HAVE_GPU):
             self.skipTest("needs IEC data + cached sensitivity + GPU")
         lors = np.loadtxt(iec, delimiter=",", dtype=np.float32)
@@ -235,7 +235,7 @@ class TestScatterDirection(unittest.TestCase):
         sens_npy = TMP / "iec_sens.npy"
         np.save(sens_npy, sens)
         import opensss_bridge as B
-        act = np.load("/home/h/Opengate/ragy_files/IEC/gt/reconstruction_image.npy")
+        act = np.load("/home/h/Code/Opengate/ragy_files/IEC/gt/reconstruction_image.npy")
         table = B.estimate_scatter(act, np.load(str(REPO / "water_attenuation_map.npy")))
         s_lor = B.scale_to_fraction(B.map_to_lors(table, lors), 0.25)
         scatter_npy = TMP / "iec_scatter.npy"
