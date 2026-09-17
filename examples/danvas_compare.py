@@ -15,6 +15,7 @@ subset are identical for both.
 import os
 import pickle
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -37,6 +38,10 @@ except ImportError:
 DATASETS = {
     "point 0_0_0": ("/home/h/Code/Opengate/ragy_files/Point_Sources_Processed/"
                     "0_0_0/gt_processed_0_0_0.csv"),
+    # off-axis (r = 91 mm on the central plane): traces a full-amplitude
+    # sinusoid in the binned sinogram, unlike the on-axis source's flat line
+    "point 64_64_0": ("/home/h/Code/Opengate/ragy_files/Point_Sources_Processed/"
+                      "64_64_0/gt_processed_64_64_0.csv"),
     "IEC gt": "/home/h/Code/Opengate/ragy_files/IEC/iec_groundtruth_filtered.csv",
     "IEC pred": "/home/h/Code/Opengate/ragy_files/IEC/iec_prediction_filtered.csv",
 }
@@ -582,8 +587,10 @@ def run_or_cancel():
                               str(HERE / "petrecon_runner.py"), str(p)], tag)
 
         def check(rc, tail, what):
-            if rc < 0:
+            if rc == -signal.SIGTERM:      # our own Cancel button
                 raise InterruptedError("cancelled")
+            if rc < 0:                     # died from another signal (SIGSEGV etc.)
+                raise RuntimeError(f"{what} crashed: {signal.Signals(-rc).name}")
             if rc != 0:
                 lines = [l for l in tail.strip().splitlines() if l.strip()]
                 raise RuntimeError(f"{what} failed: {lines[-1] if lines else rc}")
@@ -717,9 +724,17 @@ def update_scanner_model():
 update_scanner_model()
 
 update_lor_layers(len(data["lors"]))
-if (PR_OUT / "reconstruction_image.npy").exists() and OM_NPY.exists():
-    vols["pr"] = np.load(PR_OUT / "reconstruction_image.npy").astype(np.float32)
-    vols["om"] = np.load(OM_NPY).astype(np.float32)
+_saved_pr = (np.load(PR_OUT / "reconstruction_image.npy").astype(np.float32)
+             if (PR_OUT / "reconstruction_image.npy").exists() else None)
+_saved_om = np.load(OM_NPY).astype(np.float32) if OM_NPY.exists() else None
+if _saved_pr is not None and _saved_om is not None and _saved_pr.shape != _saved_om.shape:
+    # outputs from different runs (e.g. one leg re-run at another grid) —
+    # can't be compared, so start empty rather than crash in update_slices
+    print(f"[danvas_compare] saved outputs disagree on grid "
+          f"({_saved_pr.shape[0]}^3 vs {_saved_om.shape[0]}^3) — not restoring")
+    _saved_pr = _saved_om = None
+if _saved_pr is not None and _saved_om is not None:
+    vols["pr"], vols["om"] = _saved_pr, _saved_om
     if BIN_NPY.exists():
         vols["bin"] = np.load(BIN_NPY).astype(np.float32)
         _snpz = Path(str(BIN_NPY.with_suffix("")) + "_sinogram.npz")

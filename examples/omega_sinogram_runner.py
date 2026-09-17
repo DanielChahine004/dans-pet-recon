@@ -47,6 +47,22 @@ sys.modules["arrayfire.device"] = _dev
 
 import numpy as np
 
+# OMEGA's prebuilt CUDA_matrixfree_lib.so is linked against libnvrtc.so.13,
+# which is not on the loader path (the env's conda CUDA stack is 12.8; the 13
+# runtime comes from the nvidia-cuda-nvrtc pip wheel). Preloading it by soname
+# lets the dynamic linker satisfy the NEEDED entry when omegatomo dlopens.
+def _preload_nvrtc13():
+    import ctypes, glob, site, sysconfig
+    roots = [sysconfig.get_paths()["purelib"], *site.getsitepackages()]
+    for root in roots:
+        for lib in glob.glob(str(Path(root) / "nvidia" / "cu13" / "lib" / "libnvrtc.so.13")):
+            ctypes.CDLL(lib, mode=ctypes.RTLD_GLOBAL)
+            return lib
+    print("OMEGA-binned WARNING: libnvrtc.so.13 not found in site-packages "
+          "(pip package nvidia-cuda-nvrtc); OMEGA's CUDA library may fail to load",
+          flush=True)
+_preload_nvrtc13()
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import scanner as SC
 from omegatomo.projector import proj
@@ -174,6 +190,12 @@ core = time.time() - t0
 img = np.squeeze(np.asarray(pz))
 if img.ndim == 4:
     img = img[..., -1]
+# OMEGA reports failures on stdout ("Reconstruction failed!") but still returns
+# an all-zero volume with exit code 0 — surface that as a hard error so the
+# dashboard shows "failed" instead of a blank comparison
+if not np.isfinite(img).all() or img.max() <= 0:
+    sys.exit("OMEGA-binned: reconstruction produced an empty/non-finite image "
+             "(see OMEGA's own error above)")
 # resample the native 79-slice axial grid (3.746 mm over 296 mm) onto the
 # comparison cube's z grid (linear interpolation); the cube covers only the
 # central 256 mm, which also excludes the low-sensitivity boundary slabs
