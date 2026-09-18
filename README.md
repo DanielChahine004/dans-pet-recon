@@ -45,6 +45,30 @@ That runs 4-iteration / 3-subset OSEM with sensitivity correction on the
 default scanner geometry, and writes `reconstruction_image.npy` (and friends)
 to `/data/recon_out`.
 
+## Launchers (`pixi run …`)
+
+The project runs from the `base` pixi env at `~/pixi-envs/base`; a `pixi()`
+wrapper in `~/.bashrc` points `pixi run` at that manifest from any directory
+without its own, so these work from the repo root:
+
+| Task | What it launches |
+|------|------------------|
+| `pixi run scanner` | Thesis scanner CAD model + 25 point sources on a danvas Model3D panel (`:8002`) |
+| `pixi run view` | Interactive petrecon dashboard: config panels, LOR viewer, run button (`:8000`) |
+| `pixi run compare` | petrecon vs OMEGA vs OMEGA-binned comparison (`:8001`) |
+| `pixi run dashboards` | All three canvases at once; Ctrl-C stops them all |
+| `pixi run recon …` | The `petrecon` CLI, e.g. `pixi run recon run --config examples/recon_config.toml` |
+| `pixi run batch-binned` | `scripts/batch_recon_binned.py` |
+| `pixi run batch-pdf` | `scripts/batch_recon_pdf.py` |
+| `pixi run test` | Unit tests (`unittest`; engine tests need a GPU) |
+
+Before redoing the thesis §5.7 discretisation study, read
+[examples/DISCRETISATION_STUDY_RERUN.md](examples/DISCRETISATION_STUDY_RERUN.md).
+
+`pixi task list` prints the same table. Tasks are defined in
+`~/pixi-envs/base/pixi.toml`, not in this repo, because the env (torch,
+CUDA, OMEGA) lives there.
+
 ## Input data
 
 **LOR file** (`--lors`) — one row per coincidence, endpoint coordinates in mm:
