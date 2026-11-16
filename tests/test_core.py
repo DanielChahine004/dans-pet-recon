@@ -356,6 +356,120 @@ class TestForwardBackproject(unittest.TestCase):
                         f"relative error={rel_error:.6f}")
 
 
+@cuda.jit
+def _reference_forward_kernel(lors, image, out, nx, ny, nz, voxel_size, x0, y0, z0):
+    """Forward projection through the original array-and-sort siddon_cuda (reference)."""
+    idx = cuda.grid(1)
+    if idx >= lors.shape[0]:
+        return
+    voxels = cuda.local.array(1024, numba.int32)
+    lens = cuda.local.array(1024, numba.float64)
+    count = siddon_cuda(lors[idx, 0], lors[idx, 1], lors[idx, 2], lors[idx, 3], lors[idx, 4], lors[idx, 5],
+                        (nx, ny, nz), voxel_size, (x0, y0, z0), voxels, lens)
+    acc = 0.0
+    for i in range(count):
+        acc += image[voxels[i]] * lens[i]
+    out[idx] = acc
+
+
+class TestIncrementalTraversal(unittest.TestCase):
+    """siddon_trace (all projection kernels) must reproduce siddon_cuda: same voxels, same lengths."""
+
+    def _rays(self, n, seed):
+        rng = np.random.default_rng(seed)
+        r = 235.422
+        ph = rng.uniform(0, 2 * np.pi, (n, 2))
+        z = rng.uniform(-148, 148, (n, 2))
+        lors = np.stack([r * np.cos(ph[:, 0]), r * np.sin(ph[:, 0]), z[:, 0],
+                         r * np.cos(ph[:, 1]), r * np.sin(ph[:, 1]), z[:, 1]], 1)
+        # degenerate cases: axis-aligned rays, rays exactly on voxel planes and through the centre
+        lors[:8] = [[-200, 0, 0, 200, 0, 0], [0, -200, 0, 0, 200, 0], [0, 0, -200, 0, 0, 200],
+                    [-200, 1, 1, 200, 1, 1], [-200, -200, 0, 200, 200, 0], [-200, 0.5, 0.5, 200, 0.5, 0.5],
+                    [r, 0, 10, -r, 0, -10], [0, r, -30, 0, -r, 30]]
+        return lors.astype(np.float32)
+
+    def _project(self, kernel, lors, image, grid, vox):
+        nx, ny, nz = grid
+        out = cuda.device_array(len(lors), dtype=np.float32)
+        kernel[(len(lors) + 255) // 256, 256](cuda.to_device(lors), cuda.to_device(image), out,
+                                              nx, ny, nz, vox, -nx * vox / 2, -ny * vox / 2, -nz * vox / 2)
+        return out.copy_to_host()
+
+    def test_forward_matches_reference(self):
+        for grid, vox in (((64, 64, 64), 4.0), ((128, 128, 128), 2.0), ((96, 80, 50), 3.0)):
+            lors = self._rays(20000, 1)
+            image = np.random.default_rng(2).random(int(np.prod(grid))).astype(np.float32)
+            ref = self._project(_reference_forward_kernel, lors, image, grid, vox)
+            new = self._project(forward_project_kernel, lors, image, grid, vox)
+            np.testing.assert_allclose(new, ref, rtol=1e-5, atol=1e-4)
+
+    def test_backprojection_matches_reference_adjoint(self):
+        # <A x, w> computed with the reference forward equals <x, A^T w> from the new backprojector
+        grid, vox = (64, 64, 64), 4.0
+        nx, ny, nz = grid
+        lors = self._rays(5000, 3)
+        w = np.random.default_rng(4).random(len(lors)).astype(np.float32)
+        x = np.random.default_rng(5).random(nx * ny * nz).astype(np.float32)
+        lhs = float(np.dot(self._project(_reference_forward_kernel, lors, x, grid, vox).astype(np.float64), w))
+        d_bp = cuda.to_device(np.zeros(nx * ny * nz, dtype=np.float32))
+        backproject_weighted_kernel[(len(lors) + 255) // 256, 256](
+            cuda.to_device(lors), cuda.to_device(w), d_bp, nx, ny, nz, vox, -nx * vox / 2, -ny * vox / 2, -nz * vox / 2)
+        rhs = float(np.dot(d_bp.copy_to_host().astype(np.float64), x))
+        self.assertAlmostEqual(lhs / rhs, 1.0, places=5)
+
+
+class TestGPUSensitivity(unittest.TestCase):
+    """sensitivity_gpu must reproduce the streamed host-generated sensitivity (grid mode)."""
+    SCAN = dict(n_rings=6, n_det_per_ring=48, radius=235.422, axial_length=296.0)
+    GRID, VOX = (40, 40, 40), 6.0
+
+    def _streamed(self, mu=None):
+        from petrecon.helpers.sensitivity import iter_scanner_lors_chunked
+        from petrecon.helpers.backprojection import backproject_gpu_streaming
+        from petrecon.helpers.attenuation import compute_attn_sensitivity_chunked
+        it = iter_scanner_lors_chunked(self.SCAN["n_rings"], self.SCAN["n_det_per_ring"], self.SCAN["radius"],
+                                       self.SCAN["axial_length"], chunk_size=20_000, balance_directions=True)
+        if mu is None:
+            return backproject_gpu_streaming(it, self.GRID, self.VOX, batch_size=20_000)
+        return compute_attn_sensitivity_chunked(it, mu, self.GRID, self.VOX, batch_size=20_000)
+
+    def _gpu(self, **kw):
+        from petrecon.helpers.sensitivity import sensitivity_gpu
+        return sensitivity_gpu(self.SCAN["n_rings"], self.SCAN["n_det_per_ring"], self.SCAN["radius"],
+                               self.SCAN["axial_length"], self.GRID, self.VOX, rows_per_launch=37, **kw)
+
+    def test_grid_matches_streamed(self):
+        ref, new = self._streamed(), self._gpu()
+        np.testing.assert_allclose(new, ref, rtol=1e-4, atol=1e-3 * ref.max())
+
+    def test_attenuation_weighted_matches_streamed(self):
+        mu = np.zeros(self.GRID, dtype=np.float32)
+        mu[10:30, 10:30, 12:28] = 0.0096   # water block
+        ref, new = self._streamed(mu), self._gpu(mu_map=mu)
+        np.testing.assert_allclose(new, ref, rtol=1e-4, atol=1e-3 * ref.max())
+        self.assertLess(new[20, 20, 20], self._gpu()[20, 20, 20])
+
+    def test_continuous_same_scale_and_no_axis_holes(self):
+        grid, cont = self._gpu(), self._gpu(mode="continuous", n_samples=2)
+        # same order of magnitude: the grid puts the end rings at +-L/2 while the cells tile [-L/2, L/2], so the
+        # totals differ by a few % with only 6 rings (0.5 % with the 40-ring thesis scanner)
+        self.assertAlmostEqual(cont.sum() / grid.sum(), 1.0, delta=0.1)
+        c = self.GRID[0] // 2
+        axis = cont[c - 1:c + 1, c - 1:c + 1, 8:32].mean((0, 1))
+        self.assertGreater(axis.min(), 0.3 * np.median(axis))
+
+    def test_continuous_is_deterministic(self):
+        # same draws every call (float32 atomic adds run in a varying order, so not bit-exact)
+        np.testing.assert_allclose(self._gpu(mode="continuous"), self._gpu(mode="continuous"), rtol=1e-5, atol=1e-6)
+
+    def test_blur_in_mm(self):
+        from petrecon.config import ReconConfig
+        self.assertEqual(ReconConfig().sensitivity_blur_voxels(), (5.0, 5))
+        cfg = ReconConfig(voxel_size_in_mm=2.0, gaussian_sigma_mm=5.0)
+        self.assertEqual(cfg.sensitivity_blur_voxels(), (2.5, 2))
+        self.assertEqual(cfg.to_legacy_dict()["GAUSSIAN_SIGMA"], 2.5)
+
+
 class TestScannerGeometry(unittest.TestCase):
     """Tests for scanner LOR generation."""
 

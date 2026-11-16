@@ -233,3 +233,131 @@ def iter_scanner_lors_chunked(n_rings, n_det_per_ring, radius, axial_length,
 
     if buf_count > 0:
         yield _flush(buf_i, buf_j)
+
+
+# ---------------------------------------------------------------------------
+# GPU sensitivity image
+#
+# The detector pairs are generated on the GPU (one thread per ordered index pair,
+# i < j), so the ~128 M scanner LORs never exist on the host and nothing is copied
+# per chunk. Two detector models:
+#   mode="grid"       : the point detectors of iter_scanner_lors_chunked (rings at
+#                       linspace(-L/2, L/2, n_rings), angles 2*pi*k/n_det). Same LORs
+#                       as the streamed version (endpoint order is not randomised;
+#                       the traversal is direction independent).
+#   mode="continuous" : each endpoint is drawn uniformly inside its detector cell
+#                       (cells tile the full cylinder: angle (k + u) * 2*pi/n_det,
+#                       z = -L/2 + (ring + 0.5 + v) * L/n_rings, u, v in [-0.5, 0.5)).
+#                       This is the continuous-surface sensitivity that matches
+#                       continuous event positions; it removes the aliasing of the point
+#                       grid (near-zero voxels on the scanner axis). n_samples > 1 adds
+#                       independent draws of every pair (less sampling noise).
+# With a mu-map, every LOR is weighted by exp(-line integral of mu) (attenuation-
+# weighted sensitivity, same as compute_attn_sensitivity_chunked).
+# ---------------------------------------------------------------------------
+import math as _math
+from numba import cuda as _cuda
+import numba as _numba
+from .siddon import siddon_trace as _siddon_trace
+
+_MASK32 = 0xFFFFFFFF
+
+
+@_cuda.jit(device=True, inline=True)
+def _hash_u01(a, b, c):
+    """Deterministic uniform [0, 1) from three integers (lowbias32-style integer hash)."""
+    h = (a * 0x9E3779B1 + b * 0x85EBCA77 + c * 0xC2B2AE3D + 0x27D4EB2F) & _MASK32
+    h ^= h >> 16
+    h = (h * 0x7FEB352D) & _MASK32
+    h ^= h >> 15
+    h = (h * 0x846CA68B) & _MASK32
+    h ^= h >> 16
+    return h / 4294967296.0
+
+
+@_cuda.jit
+def _sensitivity_kernel(det_x, det_y, det_z, n_det_per_ring, n_rings, n, row_start, n_rows,
+                        continuous, sample, radius, axial_length,
+                        mu, use_mu, sens, nx, ny, nz, voxel_size, x0, y0, z0):
+    idx = _cuda.grid(1)
+    if idx >= n_rows * n:
+        return
+    i = row_start + idx // n
+    j = idx % n
+    if j <= i:
+        return
+    if continuous:
+        ri = i // n_det_per_ring
+        rj = j // n_det_per_ring
+        ki = i % n_det_per_ring
+        kj = j % n_det_per_ring
+        ai = (ki + _hash_u01(i, j, 4 * sample) - 0.5) * (2.0 * _math.pi / n_det_per_ring)
+        aj = (kj + _hash_u01(i, j, 4 * sample + 1) - 0.5) * (2.0 * _math.pi / n_det_per_ring)
+        pitch = axial_length / n_rings
+        x1 = radius * _math.cos(ai)
+        y1 = radius * _math.sin(ai)
+        z1 = -0.5 * axial_length + (ri + _hash_u01(i, j, 4 * sample + 2)) * pitch
+        x2 = radius * _math.cos(aj)
+        y2 = radius * _math.sin(aj)
+        z2 = -0.5 * axial_length + (rj + _hash_u01(i, j, 4 * sample + 3)) * pitch
+    else:
+        x1 = det_x[i]
+        y1 = det_y[i]
+        z1 = det_z[i]
+        x2 = det_x[j]
+        y2 = det_y[j]
+        z2 = det_z[j]
+    w = 1.0
+    if use_mu:
+        w = _math.exp(-_siddon_trace(x1, y1, z1, x2, y2, z2, nx, ny, nz, voxel_size, x0, y0, z0,
+                                     mu, mu, 0.0, False))
+    _siddon_trace(x1, y1, z1, x2, y2, z2, nx, ny, nz, voxel_size, x0, y0, z0, sens, sens, w, True)
+
+
+def sensitivity_gpu(n_rings, n_det_per_ring, radius, axial_length, grid_size, voxel_size,
+                    mode="grid", n_samples=1, mu_map=None, rows_per_launch=1024):
+    """Sensitivity image (backprojection of all detector pairs), computed entirely on the GPU.
+
+    Args:
+        n_rings, n_det_per_ring, radius, axial_length: scanner (as iter_scanner_lors_chunked)
+        grid_size, voxel_size: image grid (centred at the origin)
+        mode: "grid" (point detectors, the classic sensitivity) or "continuous" (uniform within each
+            detector cell; matches continuous event positions, no on-axis aliasing)
+        n_samples: independent draws of every pair for mode="continuous" (the result is averaged)
+        mu_map: optional mu-map (mm^-1, grid_size) for the attenuation-weighted sensitivity
+        rows_per_launch: detector rows (i) per kernel launch
+
+    Returns:
+        (nx, ny, nz) float32 sensitivity image, on the same scale as backproject_gpu_streaming
+        of iter_scanner_lors_chunked (one unit-weight LOR per detector pair)
+    """
+    if mode not in ("grid", "continuous"):
+        raise ValueError(f"unknown sensitivity mode {mode!r} (use 'grid' or 'continuous')")
+    n_samples = int(n_samples) if mode == "continuous" else 1
+    if n_samples < 1:
+        raise ValueError("n_samples must be >= 1")
+    nx, ny, nz = grid_size
+    x0, y0, z0 = -nx * voxel_size / 2.0, -ny * voxel_size / 2.0, -nz * voxel_size / 2.0
+    n = n_rings * n_det_per_ring
+    angles = np.linspace(0, 2 * np.pi, n_det_per_ring, endpoint=False)
+    z_positions = np.linspace(-axial_length / 2, axial_length / 2, n_rings)
+    det_x = np.tile((radius * np.cos(angles)).astype(np.float32), n_rings)
+    det_y = np.tile((radius * np.sin(angles)).astype(np.float32), n_rings)
+    det_z = np.repeat(z_positions.astype(np.float32), n_det_per_ring)
+    d_x, d_y, d_z = _cuda.to_device(det_x), _cuda.to_device(det_y), _cuda.to_device(det_z)
+    use_mu = mu_map is not None
+    d_mu = _cuda.to_device((mu_map if use_mu else np.zeros(1)).ravel().astype(np.float32))
+    d_sens = _cuda.to_device(np.zeros(nx * ny * nz, dtype=np.float32))
+    tpb = 256
+    print(f"GPU sensitivity: {n * (n - 1) // 2:_} pairs x {n_samples} sample(s), mode={mode}, "
+          f"attenuation={'on' if use_mu else 'off'}")
+    for s in range(n_samples):
+        for row_start in range(0, n - 1, rows_per_launch):
+            n_rows = min(rows_per_launch, n - 1 - row_start)
+            blocks = (n_rows * n + tpb - 1) // tpb
+            _sensitivity_kernel[blocks, tpb](d_x, d_y, d_z, n_det_per_ring, n_rings, n, row_start, n_rows,
+                                             mode == "continuous", s, float(radius), float(axial_length),
+                                             d_mu, use_mu, d_sens, nx, ny, nz, float(voxel_size), x0, y0, z0)
+    _cuda.synchronize()
+    sens = d_sens.copy_to_host().reshape(grid_size)
+    return sens / n_samples if n_samples > 1 else sens

@@ -22,9 +22,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import scanner as SC
 from scipy.ndimage import gaussian_filter
 
-from petrecon.helpers.backprojection import backproject_gpu, backproject_gpu_streaming
+from petrecon.helpers.backprojection import backproject_gpu
 from petrecon.helpers.osem import osem_gpu
-from petrecon.helpers.sensitivity import iter_scanner_lors_chunked, total_scanner_lors
+from petrecon.helpers.sensitivity import sensitivity_gpu
 
 cfg = pickle.load(open(sys.argv[1], "rb"))
 lors = np.load(cfg["lors_npy"]).astype(np.float64)
@@ -48,12 +48,8 @@ t0 = time.time()
 if cfg.get("sens_npy"):
     sens = np.load(cfg["sens_npy"]).astype(np.float64)
 elif cfg.get("sensitivity"):
-    n_scanner = total_scanner_lors(SC.RINGS, SC.DETS_PER_RING)
-    sens = backproject_gpu_streaming(
-        iter_scanner_lors_chunked(SC.RINGS, SC.DETS_PER_RING, SC.INNER_RADIUS_MM,
-                                  SC.AXIAL_MM,
-                                  chunk_size=5_000_000, balance_directions=True),
-        grid_size=grid, voxel_size=voxel, batch_size=5_000_000, total_lors=n_scanner)
+    sens = sensitivity_gpu(SC.RINGS, SC.DETS_PER_RING, SC.INNER_RADIUS_MM, SC.AXIAL_MM,
+                           grid, voxel, mode=cfg.get("sensitivity_mode", "grid"))
     sens = gaussian_filter(sens, sigma=5.0, radius=5)
 else:
     sens = np.ones(grid)

@@ -44,11 +44,13 @@ voxel_size_in_mm = 1.0
 
 # ---- Corrections ----
 sensitivity_correction = true
-sensitivity_chunk_size = 5000000      # LORs per CPU chunk during scanner LOR streaming
-sensitivity_batch_size = 5000000      # LORs per GPU kernel launch — tune to VRAM
+sensitivity_mode = "grid"             # "grid" (point detectors) | "continuous" (no on-axis hole)
+sensitivity_samples = 1               # draws per detector pair for "continuous"
 smooth_sensitivity = true
-gaussian_sigma = 5.0
-gaussian_radius = 5
+gaussian_sigma = 5.0                  # voxels
+gaussian_radius = 5                   # voxels
+# gaussian_sigma_mm = 5.0             # overrides gaussian_sigma: blur sigma in mm
+# gaussian_radius_mm = 5.0            # truncation radius in mm (default: gaussian_sigma_mm)
 # attenuation_correction = true       # default: auto (on iff mu_map_path is set)
 scatter_correction = false
 
@@ -95,6 +97,12 @@ def _add_run_args(p: argparse.ArgumentParser):
                    action=argparse.BooleanOptionalAction, help="Sensitivity correction")
     p.add_argument("--smooth-sensitivity", dest="smooth_sensitivity",
                    action=argparse.BooleanOptionalAction, help="Gaussian-smooth the sensitivity image")
+    p.add_argument("--sensitivity-mode", dest="sensitivity_mode", choices=["grid", "continuous"],
+                   help="Sensitivity detector model: grid (point detectors) or continuous (default: grid)")
+    p.add_argument("--sensitivity-samples", dest="sensitivity_samples", type=int,
+                   help="Draws per detector pair for --sensitivity-mode continuous (default: 1)")
+    p.add_argument("--smooth-sigma-mm", dest="gaussian_sigma_mm", type=float,
+                   help="Sensitivity blur sigma in mm (overrides gaussian_sigma in voxels)")
     p.add_argument("--attenuation", dest="attenuation_correction",
                    action=argparse.BooleanOptionalAction,
                    help="Attenuation correction (default: on iff --mu-map is given)")

@@ -202,89 +202,187 @@ def siddon_cuda(x1, y1, z1, x2, y2, z2, grid_size, voxel_size, grid_origin,
 
     return count
 
-# @njit or this
+# ---------------------------------------------------------------------------
+# Incremental traversal (used by all projection kernels)
+#
+# siddon_cuda() above collects every plane crossing into a 1024-element local
+# array, insertion-sorts it and then walks the segments. That needs ~20 KB of
+# local memory per thread (spilled to device memory) and an O(n^2) sort per ray.
+# siddon_trace() produces the SAME segments without any arrays: the x-, y- and
+# z-plane crossings are each already sorted, so they are merged on the fly.
+# The crossing values are generated exactly as in siddon_cuda (same first-plane
+# rule, same repeated addition of t_delta), segments closer than EPS are dropped
+# exactly like its duplicate removal, and the voxel is chosen by the same
+# midpoint rule, so the two give the same voxels and lengths. siddon_cuda() is
+# kept for the scatter code and the tests.
+# ---------------------------------------------------------------------------
+
+@cuda.jit(device=True, inline=True)
+def _first_plane_t(p1, d, t_min, origin, voxel_size):
+    """t of the first plane crossing after t_min along one axis (same rule as siddon_cuda)."""
+    if d > 0:
+        plane = math.ceil((p1 + t_min * d - origin + PLANE_NUDGE) / voxel_size)
+    else:
+        plane = math.floor((p1 + t_min * d - origin - PLANE_NUDGE) / voxel_size)
+    return (origin + plane * voxel_size - p1) / d
+
+
+@cuda.jit(device=True)
+def siddon_trace(x1, y1, z1, x2, y2, z2, nx, ny, nz, voxel_size, x0, y0, z0,
+                 image, out, weight, backproject):
+    """Trace one ray through the grid.
+
+    backproject=True : out[voxel] += weight * length for every intersected voxel (atomic); returns 0.
+    backproject=False: returns sum(image[voxel] * length) (forward projection); out is not used.
+    """
+    dx = x2 - x1
+    dy = y2 - y1
+    dz = z2 - z1
+    ray_length = math.sqrt(dx * dx + dy * dy + dz * dz)
+    if ray_length < EPS:
+        return 0.0
+    dx /= ray_length
+    dy /= ray_length
+    dz /= ray_length
+
+    big = 1e10
+    if abs(dx) > EPS:
+        tx_min = (x0 - x1) / dx
+        tx_max = (x0 + nx * voxel_size - x1) / dx
+        if tx_min > tx_max:
+            tx_min, tx_max = tx_max, tx_min
+    else:
+        tx_min = -big
+        tx_max = big
+    if abs(dy) > EPS:
+        ty_min = (y0 - y1) / dy
+        ty_max = (y0 + ny * voxel_size - y1) / dy
+        if ty_min > ty_max:
+            ty_min, ty_max = ty_max, ty_min
+    else:
+        ty_min = -big
+        ty_max = big
+    if abs(dz) > EPS:
+        tz_min = (z0 - z1) / dz
+        tz_max = (z0 + nz * voxel_size - z1) / dz
+        if tz_min > tz_max:
+            tz_min, tz_max = tz_max, tz_min
+    else:
+        tz_min = -big
+        tz_max = big
+
+    t_min = max(max(tx_min, ty_min), tz_min)
+    t_max = min(min(tx_max, ty_max), tz_max)
+    if t_min >= t_max or t_max < 0 or t_min > ray_length:
+        return 0.0
+    t_min = max(t_min, 0.0)
+    t_max = min(t_max, ray_length)
+
+    # Heads of the three crossing sequences; inf = exhausted. Crossings <= t_min are skipped
+    # and crossings >= t_max are not used, as in siddon_cuda.
+    inf = math.inf
+    tx = inf
+    sx = 0.0
+    if abs(dx) > EPS:
+        sx = voxel_size / abs(dx)
+        tx = _first_plane_t(x1, dx, t_min, x0, voxel_size)
+        while tx <= t_min:
+            tx += sx
+        if tx >= t_max:
+            tx = inf
+    ty = inf
+    sy = 0.0
+    if abs(dy) > EPS:
+        sy = voxel_size / abs(dy)
+        ty = _first_plane_t(y1, dy, t_min, y0, voxel_size)
+        while ty <= t_min:
+            ty += sy
+        if ty >= t_max:
+            ty = inf
+    tz = inf
+    sz = 0.0
+    if abs(dz) > EPS:
+        sz = voxel_size / abs(dz)
+        tz = _first_plane_t(z1, dz, t_min, z0, voxel_size)
+        while tz <= t_min:
+            tz += sz
+        if tz >= t_max:
+            tz = inf
+
+    acc = 0.0
+    t_prev = t_min
+    done = False
+    while not done:
+        # next crossing in sorted order, or the exit point
+        if tx <= ty and tx <= tz:
+            t_next = tx
+            axis = 0
+        elif ty <= tz:
+            t_next = ty
+            axis = 1
+        else:
+            t_next = tz
+            axis = 2
+        if t_next == inf:
+            t_next = t_max
+            axis = 3
+            done = True
+        else:
+            if axis == 0:
+                tx += sx
+                if tx >= t_max:
+                    tx = inf
+            elif axis == 1:
+                ty += sy
+                if ty >= t_max:
+                    ty = inf
+            else:
+                tz += sz
+                if tz >= t_max:
+                    tz = inf
+        length = t_next - t_prev
+        if length <= EPS:
+            continue  # duplicate crossing (or exit point equal to the last crossing): dropped, t_prev kept
+        t_mid = 0.5 * (t_prev + t_next)
+        t_prev = t_next
+        ix = int(math.floor((x1 + t_mid * dx - x0) / voxel_size))
+        iy = int(math.floor((y1 + t_mid * dy - y0) / voxel_size))
+        iz = int(math.floor((z1 + t_mid * dz - z0) / voxel_size))
+        if ix < 0 or ix >= nx or iy < 0 or iy >= ny or iz < 0 or iz >= nz:
+            continue
+        v = ix * ny * nz + iy * nz + iz
+        if backproject:
+            cuda.atomic.add(out, v, weight * length)
+        else:
+            acc += image[v] * length
+    return acc
+
+
 @cuda.jit
 def backproject_kernel(lors, backproj, nx, ny, nz, voxel_size, x0, y0, z0):
+    """Backproject ones: accumulate the intersection lengths of every LOR."""
     idx = cuda.grid(1)
-
     if idx >= lors.shape[0]:
         return
-
-    voxels = cuda.local.array(1024, numba.int32)
-    lens = cuda.local.array(1024, numba.float64)
-    
-    x1 = lors[idx, 0]
-    y1 = lors[idx, 1]
-    z1 = lors[idx, 2]
-    x2 = lors[idx, 3]
-    y2 = lors[idx, 4]
-    z2 = lors[idx, 5]
-    
-    count = siddon_cuda(x1, y1, z1, x2, y2, z2,
-                       (nx, ny, nz), voxel_size, (x0, y0, z0),
-                       voxels, lens)
-    
-    # Simply accumulate the path lengths
-    for i in range(count):
-        v_idx = voxels[i]
-        cuda.atomic.add(backproj, v_idx, lens[i])
+    siddon_trace(lors[idx, 0], lors[idx, 1], lors[idx, 2], lors[idx, 3], lors[idx, 4], lors[idx, 5],
+                 nx, ny, nz, voxel_size, x0, y0, z0, backproj, backproj, 1.0, True)
 
 
 @cuda.jit
 def forward_project_kernel(lors, image, projections, nx, ny, nz, voxel_size, x0, y0, z0):
     """Forward project: compute line integrals through image for each LOR."""
     idx = cuda.grid(1)
-
     if idx >= lors.shape[0]:
         return
-
-    voxels = cuda.local.array(1024, numba.int32)
-    lens = cuda.local.array(1024, numba.float64)
-
-    x1 = lors[idx, 0]
-    y1 = lors[idx, 1]
-    z1 = lors[idx, 2]
-    x2 = lors[idx, 3]
-    y2 = lors[idx, 4]
-    z2 = lors[idx, 5]
-
-    count = siddon_cuda(x1, y1, z1, x2, y2, z2,
-                       (nx, ny, nz), voxel_size, (x0, y0, z0),
-                       voxels, lens)
-
-    # Compute line integral through image
-    projection = 0.0
-    for i in range(count):
-        v_idx = voxels[i]
-        projection += image[v_idx] * lens[i]
-
-    projections[idx] = projection
+    projections[idx] = siddon_trace(lors[idx, 0], lors[idx, 1], lors[idx, 2], lors[idx, 3], lors[idx, 4], lors[idx, 5],
+                                    nx, ny, nz, voxel_size, x0, y0, z0, image, image, 0.0, False)
 
 
 @cuda.jit
 def backproject_weighted_kernel(lors, weights, backproj, nx, ny, nz, voxel_size, x0, y0, z0):
     """Backproject with per-LOR weights (for OSEM ratio backprojection)."""
     idx = cuda.grid(1)
-
     if idx >= lors.shape[0]:
         return
-
-    voxels = cuda.local.array(1024, numba.int32)
-    lens = cuda.local.array(1024, numba.float64)
-
-    x1 = lors[idx, 0]
-    y1 = lors[idx, 1]
-    z1 = lors[idx, 2]
-    x2 = lors[idx, 3]
-    y2 = lors[idx, 4]
-    z2 = lors[idx, 5]
-
-    count = siddon_cuda(x1, y1, z1, x2, y2, z2,
-                       (nx, ny, nz), voxel_size, (x0, y0, z0),
-                       voxels, lens)
-
-    # Backproject weighted by the ratio for this LOR
-    w = weights[idx]
-    for i in range(count):
-        v_idx = voxels[i]
-        cuda.atomic.add(backproj, v_idx, lens[i] * w)
+    siddon_trace(lors[idx, 0], lors[idx, 1], lors[idx, 2], lors[idx, 3], lors[idx, 4], lors[idx, 5],
+                 nx, ny, nz, voxel_size, x0, y0, z0, backproj, backproj, weights[idx], True)

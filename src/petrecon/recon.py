@@ -8,12 +8,12 @@ from numba import cuda
 from scipy.ndimage import gaussian_filter
 
 from petrecon.config import ReconConfig
-from petrecon.helpers.attenuation import compute_acf, compute_attn_sensitivity_chunked
-from petrecon.helpers.backprojection import backproject_gpu, backproject_gpu_streaming
+from petrecon.helpers.attenuation import compute_acf
+from petrecon.helpers.backprojection import backproject_gpu
 from petrecon.helpers.data_io import load_lors, load_mu_map
 from petrecon.helpers.diagnostics import plot_sss_diagnostics
 from petrecon.helpers.osem import osem_gpu
-from petrecon.helpers.sensitivity import iter_scanner_lors_chunked, total_scanner_lors
+from petrecon.helpers.sensitivity import sensitivity_gpu
 
 
 def print_scanner_details(cfg: ReconConfig):
@@ -37,7 +37,12 @@ def print_recon_details(cfg: ReconConfig):
     print(f"Image space size:       ({gx * cfg.voxel_size_in_mm}, {gy * cfg.voxel_size_in_mm}, {gz * cfg.voxel_size_in_mm}) mm")
     print(f"Algorithm:              {cfg.recon_algorithm}")
     print(f"Sensitivity correction: {cfg.sensitivity_correction}")
-    print(f"Smooth Sensitivity: {cfg.smooth_sensitivity}")
+    print(f"Sensitivity mode:       {cfg.sensitivity_mode}"
+          + (f" ({cfg.sensitivity_samples} samples)" if cfg.sensitivity_mode == "continuous" else ""))
+    blur_sigma, blur_radius = cfg.sensitivity_blur_voxels()
+    print(f"Smooth Sensitivity: {cfg.smooth_sensitivity}"
+          + (f" (sigma {blur_sigma:g} vox = {blur_sigma * cfg.voxel_size_in_mm:g} mm, radius {blur_radius} vox)"
+             if cfg.smooth_sensitivity else ""))
     print(f"Attenuation correction: {cfg.attenuation_correction}")
     print(f"Scatter correction:     {cfg.scatter_correction}")
     if cfg.recon_algorithm == "OSEM":
@@ -113,36 +118,20 @@ def run_reconstruction(cfg: ReconConfig):
 
     # ---- Sensitivity image ----
     if cfg.sensitivity_correction:
-        n_scanner_lors = total_scanner_lors(cfg.n_axial_rings, cfg.n_detectors_per_ring)
-
+        # Backprojection of every detector pair, generated and traced on the GPU. With attenuation
+        # correction every pair is weighted by its ACF (attenuation-weighted sensitivity).
         if cfg.attenuation_correction:
-            # Single-pass attenuation-weighted sensitivity — streams LOR chunks, never
-            # materialises the full scanner_lors or acf_scanner arrays in CPU RAM.
-            print("Computing attenuation-weighted sensitivity (streaming)...")
-            sensitivity_image = compute_attn_sensitivity_chunked(
-                iter_scanner_lors_chunked(cfg.n_axial_rings, cfg.n_detectors_per_ring,
-                                          cfg.inner_radius, cfg.axial_length,
-                                          chunk_size=cfg.sensitivity_chunk_size,
-                                          balance_directions=True),
-                mu_map, cfg.image_grid_size, cfg.voxel_size_in_mm,
-                batch_size=cfg.sensitivity_batch_size,
-                total_lors=n_scanner_lors,
-            )
-        else:
-            # Geometric sensitivity (backprojection of ones) — streamed to avoid OOM
-            sensitivity_image = backproject_gpu_streaming(
-                iter_scanner_lors_chunked(cfg.n_axial_rings, cfg.n_detectors_per_ring,
-                                          cfg.inner_radius, cfg.axial_length,
-                                          chunk_size=cfg.sensitivity_chunk_size,
-                                          balance_directions=True),
-                grid_size=cfg.image_grid_size,
-                voxel_size=cfg.voxel_size_in_mm,
-                batch_size=cfg.sensitivity_batch_size,
-                total_lors=n_scanner_lors,
-            )
+            print("Computing attenuation-weighted sensitivity (GPU)...")
+        sensitivity_image = sensitivity_gpu(
+            cfg.n_axial_rings, cfg.n_detectors_per_ring, cfg.inner_radius, cfg.axial_length,
+            cfg.image_grid_size, cfg.voxel_size_in_mm,
+            mode=cfg.sensitivity_mode, n_samples=cfg.sensitivity_samples,
+            mu_map=mu_map if cfg.attenuation_correction else None,
+        )
 
         if cfg.smooth_sensitivity:
-            sensitivity_image = gaussian_filter(sensitivity_image, sigma=cfg.gaussian_sigma, radius=cfg.gaussian_radius)
+            blur_sigma, blur_radius = cfg.sensitivity_blur_voxels()
+            sensitivity_image = gaussian_filter(sensitivity_image, sigma=blur_sigma, radius=blur_radius)
     else:
         sensitivity_image = np.ones(cfg.image_grid_size)
 

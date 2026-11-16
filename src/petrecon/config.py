@@ -40,11 +40,18 @@ class ReconConfig:
 
     # ---- Corrections ----
     sensitivity_correction: bool = True
-    sensitivity_chunk_size: int = 5_000_000  # LORs per CPU chunk during scanner LOR streaming
-    sensitivity_batch_size: int = 5_000_000  # LORs per GPU kernel launch — tune to VRAM
+    sensitivity_chunk_size: int = 5_000_000  # unused: the scanner LORs are now generated on the GPU (kept for old configs)
+    sensitivity_batch_size: int = 5_000_000  # unused: see sensitivity_chunk_size
+    # "grid": point detectors at the ring/detector positions (classic; aliases on the scanner axis, where some
+    # voxels get ~zero sensitivity, so it needs smooth_sensitivity). "continuous": each detector-pair endpoint
+    # uniform within its detector cell, which matches continuous event positions and has no on-axis hole.
+    sensitivity_mode: str = "grid"
+    sensitivity_samples: int = 1             # independent draws of every detector pair ("continuous" only)
     smooth_sensitivity: bool = True
-    gaussian_sigma: float = 5.0
-    gaussian_radius: int = 5
+    gaussian_sigma: float = 5.0              # in voxels (so its width in mm changes with voxel_size_in_mm)
+    gaussian_radius: int = 5                 # truncation radius in voxels (5 with sigma 5 = cut at 1 sigma)
+    gaussian_sigma_mm: float | None = None   # if set, overrides gaussian_sigma: blur sigma in mm
+    gaussian_radius_mm: float | None = None  # truncation radius in mm (default: gaussian_sigma_mm, i.e. 1 sigma)
     attenuation_correction: bool | None = None  # None = auto: on iff mu_map_path is set
     scatter_correction: bool = False
 
@@ -92,10 +99,24 @@ class ReconConfig:
                 errors.append("attenuation_correction requires mu_map_path (--mu-map)")
             elif not Path(self.mu_map_path).exists():
                 errors.append(f"mu_map_path does not exist: {self.mu_map_path}")
+        if self.sensitivity_mode not in ("grid", "continuous"):
+            errors.append(f"sensitivity_mode must be 'grid' or 'continuous', got {self.sensitivity_mode!r}")
+        if self.sensitivity_samples < 1:
+            errors.append("sensitivity_samples must be >= 1")
+        if self.gaussian_sigma_mm is not None and self.gaussian_sigma_mm <= 0:
+            errors.append("gaussian_sigma_mm must be > 0")
         if len(self.image_grid_size) != 3:
             errors.append(f"image_grid_size must have 3 dimensions, got {self.image_grid_size}")
         if errors:
             raise ValueError("Invalid configuration:\n  - " + "\n  - ".join(errors))
+
+    # ------------------------------------------------------------------
+    def sensitivity_blur_voxels(self) -> tuple[float, int]:
+        """(sigma, truncation radius) of the sensitivity smoothing, in voxels."""
+        if self.gaussian_sigma_mm is None:
+            return float(self.gaussian_sigma), int(self.gaussian_radius)
+        radius_mm = self.gaussian_radius_mm if self.gaussian_radius_mm is not None else self.gaussian_sigma_mm
+        return self.gaussian_sigma_mm / self.voxel_size_in_mm, max(1, int(round(radius_mm / self.voxel_size_in_mm)))
 
     # ------------------------------------------------------------------
     @classmethod
@@ -123,14 +144,19 @@ class ReconConfig:
         must stay stable.
         """
         is_osem = self.recon_algorithm == "OSEM"
+        # the effective blur in voxels (viewers re-apply it with these two keys)
+        blur_sigma, blur_radius = self.sensitivity_blur_voxels()
         return {
             "OUTPUT_DIR": self.output_dir,
             "PATH_TO_LORS": self.path_to_lors,
             "RECON_ALGORITHM": self.recon_algorithm,
             "SENSITIVITY_CORRECTION": self.sensitivity_correction,
             "SMOOTH_SENSITIVITY": self.smooth_sensitivity,
-            "GAUSSIAN_SIGMA": self.gaussian_sigma,
-            "GAUSSIAN_RADIUS": self.gaussian_radius,
+            "GAUSSIAN_SIGMA": blur_sigma,
+            "GAUSSIAN_RADIUS": blur_radius,
+            "GAUSSIAN_SIGMA_MM": self.gaussian_sigma_mm,
+            "SENSITIVITY_MODE": self.sensitivity_mode,
+            "SENSITIVITY_SAMPLES": self.sensitivity_samples,
             "IMAGE_GRID_SIZE": self.image_grid_size,
             "VOXEL_SIZE_IN_MM": self.voxel_size_in_mm,
             "N_AXIAL_RINGS": self.n_axial_rings,
