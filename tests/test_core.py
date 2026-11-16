@@ -403,6 +403,17 @@ class TestIncrementalTraversal(unittest.TestCase):
             new = self._project(forward_project_kernel, lors, image, grid, vox)
             np.testing.assert_allclose(new, ref, rtol=1e-5, atol=1e-4)
 
+    def test_scanner_grid_rays_match_reference_both_directions(self):
+        # diametric grid LORs lie within rounding of the x = 0 / y = 0 voxel planes (e.g. x from +1e-14 to -4e-14):
+        # the traversal must assign them like siddon_cuda, whatever the endpoint order
+        lors = generate_scanner_lors(6, 48, 235.422, 296.0).astype(np.float32)
+        swapped = np.ascontiguousarray(np.hstack([lors[:, 3:], lors[:, :3]]))
+        grid, vox = (40, 40, 40), 6.0
+        image = np.random.default_rng(0).random(int(np.prod(grid))).astype(np.float32)
+        ref = self._project(_reference_forward_kernel, lors, image, grid, vox)
+        for l in (lors, swapped):
+            np.testing.assert_allclose(self._project(forward_project_kernel, l, image, grid, vox), ref, rtol=1e-5, atol=1e-4)
+
     def test_backprojection_matches_reference_adjoint(self):
         # <A x, w> computed with the reference forward equals <x, A^T w> from the new backprojector
         grid, vox = (64, 64, 64), 4.0
@@ -468,6 +479,58 @@ class TestGPUSensitivity(unittest.TestCase):
         cfg = ReconConfig(voxel_size_in_mm=2.0, gaussian_sigma_mm=5.0)
         self.assertEqual(cfg.sensitivity_blur_voxels(), (2.5, 2))
         self.assertEqual(cfg.to_legacy_dict()["GAUSSIAN_SIGMA"], 2.5)
+
+
+class TestOSEMGPUResident(unittest.TestCase):
+    """The GPU-resident, direction-sorted osem_gpu must reproduce the previous host-loop version."""
+
+    @classmethod
+    def setUpClass(cls):
+        rng = np.random.default_rng(7)
+        n, R = 6000, 235.422
+        src = rng.normal(0, 25, (n, 3)) * [1, 1, 0.8]            # blob phantom
+        d = rng.normal(size=(n, 3)); d /= np.linalg.norm(d, axis=1, keepdims=True)
+        a = d[:, 0] ** 2 + d[:, 1] ** 2; b = 2 * (src[:, 0] * d[:, 0] + src[:, 1] * d[:, 1])
+        c = src[:, 0] ** 2 + src[:, 1] ** 2 - R * R; s = np.sqrt(b * b - 4 * a * c)
+        cls.lors = np.hstack([src + ((-b - s) / (2 * a))[:, None] * d, src + ((-b + s) / (2 * a))[:, None] * d])
+        cls.grid, cls.vox = (48, 48, 48), 4.0
+        from petrecon.helpers.sensitivity import sensitivity_gpu
+        cls.sens = sensitivity_gpu(8, 64, R, 296.0, cls.grid, cls.vox, mode="continuous")
+        cls.acf = rng.uniform(0.3, 1.0, n).astype(np.float32)
+        cls.scatter = rng.uniform(0.0, 0.05, n).astype(np.float32)
+
+    def _run(self, reference, **kw):
+        sys.path.insert(0, os.path.dirname(__file__))
+        if reference:
+            from _osem_reference import osem_gpu as f
+        else:
+            from petrecon.helpers.osem import osem_gpu as f
+        return f(self.lors, self.grid, self.vox, self.sens, n_iterations=3, n_subsets=4, batch_size=1000, **kw)
+
+    def _check(self, ref, new):
+        self.assertTrue(np.all(np.isfinite(new)))
+        # observed: ~1e-7 relative, the same as the reference run twice (float32 atomic summation order)
+        np.testing.assert_allclose(new, ref, rtol=1e-5, atol=1e-6 * ref.max())
+
+    def test_plain(self):
+        ref = self._run(True)
+        for kw in (dict(), dict(sort_lors=False), dict(keep_on_gpu=False)):
+            self._check(ref, self._run(False, **kw))
+
+    def test_attenuation_and_scatter(self):
+        corr = dict(acf=self.acf, scatter=self.scatter)
+        ref = self._run(True, **corr)
+        for kw in (dict(), dict(keep_on_gpu=False)):
+            self._check(ref, self._run(False, **corr, **kw))
+
+    def test_init_image_and_empty_subset(self):
+        from _osem_reference import osem_gpu as reference
+        from petrecon.helpers.osem import osem_gpu
+        init = np.random.default_rng(3).random(self.grid).astype(np.float32)
+        lors = self.lors[:5]                                      # 5 LORs, 8 subsets -> empty subsets
+        ref = reference(lors, self.grid, self.vox, self.sens, n_iterations=2, n_subsets=8, init_image=init)
+        new = osem_gpu(lors, self.grid, self.vox, self.sens, n_iterations=2, n_subsets=8, init_image=init)
+        self._check(ref, new)
 
 
 class TestScannerGeometry(unittest.TestCase):

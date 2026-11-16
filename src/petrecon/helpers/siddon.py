@@ -309,6 +309,16 @@ def siddon_trace(x1, y1, z1, x2, y2, z2, nx, ny, nz, voxel_size, x0, y0, z0,
         if tz >= t_max:
             tz = inf
 
+    # Voxel index: from the midpoint of the first segment (as siddon_cuda does for every segment), then stepped by
+    # +-1 on the axis of every crossing consumed after it, including crossings dropped as duplicates (they are real
+    # plane crossings; the midpoint of the next segment lies beyond them), instead of three floors per segment.
+    stx = 1 if dx > 0 else -1
+    sty = 1 if dy > 0 else -1
+    stz = 1 if dz > 0 else -1
+    have_idx = False
+    ix = 0
+    iy = 0
+    iz = 0
     acc = 0.0
     t_prev = t_min
     done = False
@@ -341,20 +351,35 @@ def siddon_trace(x1, y1, z1, x2, y2, z2, nx, ny, nz, voxel_size, x0, y0, z0,
                 if tz >= t_max:
                     tz = inf
         length = t_next - t_prev
-        if length <= EPS:
-            continue  # duplicate crossing (or exit point equal to the last crossing): dropped, t_prev kept
-        t_mid = 0.5 * (t_prev + t_next)
-        t_prev = t_next
-        ix = int(math.floor((x1 + t_mid * dx - x0) / voxel_size))
-        iy = int(math.floor((y1 + t_mid * dy - y0) / voxel_size))
-        iz = int(math.floor((z1 + t_mid * dz - z0) / voxel_size))
-        if ix < 0 or ix >= nx or iy < 0 or iy >= ny or iz < 0 or iz >= nz:
-            continue
-        v = ix * ny * nz + iy * nz + iz
-        if backproject:
-            cuda.atomic.add(out, v, weight * length)
-        else:
-            acc += image[v] * length
+        # length <= EPS: duplicate crossing (or exit point equal to the last crossing): no segment, t_prev kept
+        if length > EPS:
+            # Axes without tracked crossings (|d| <= EPS) keep the midpoint rule on every segment: such a ray can lie
+            # within rounding of a voxel boundary plane (e.g. diametric grid LORs on x = 0) and siddon_cuda assigns
+            # each segment by the sign of that rounding, which stepping alone would not reproduce.
+            if not have_idx or sx == 0.0 or sy == 0.0 or sz == 0.0:
+                t_mid = 0.5 * (t_prev + t_next)
+                if not have_idx or sx == 0.0:
+                    ix = int(math.floor((x1 + t_mid * dx - x0) / voxel_size))
+                if not have_idx or sy == 0.0:
+                    iy = int(math.floor((y1 + t_mid * dy - y0) / voxel_size))
+                if not have_idx or sz == 0.0:
+                    iz = int(math.floor((z1 + t_mid * dz - z0) / voxel_size))
+                have_idx = True
+            t_prev = t_next
+            if ix >= 0 and ix < nx and iy >= 0 and iy < ny and iz >= 0 and iz < nz:
+                v = ix * ny * nz + iy * nz + iz
+                if backproject:
+                    cuda.atomic.add(out, v, weight * length)
+                else:
+                    acc += image[v] * length
+        # the crossing just consumed moves the ray into the next voxel along its axis
+        if have_idx:
+            if axis == 0:
+                ix += stx
+            elif axis == 1:
+                iy += sty
+            elif axis == 2:
+                iz += stz
     return acc
 
 
